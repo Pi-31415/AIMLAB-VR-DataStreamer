@@ -202,13 +202,10 @@ This is a research project. For questions or collaboration:
 
 **Contact:** Pi Ko (pi.ko@nyu.edu)
 
-## License
-
-[Specify your license here]
 
 ## Acknowledgments
 
-Developed for AIMLAB experiments at NYU.
+Developed for AIMLAB experiments at NYUAD.
 
 ---
 
