@@ -1,214 +1,348 @@
-# AIMLAB-VR-DataStreamer
+# AIMLAB VR Data Streamer
 
-**Author:** Pi Ko (pi.ko@nyu.edu)  
-**Date:** 21 October 2025  
-**Version:** v1.0
+A robust, cross-platform network communication system for VR data streaming with automatic peer discovery, reliable handshake protocols, and bidirectional communication.
 
-Platform agnostic VR Data Streamer for AIMLAB Experiments in C++
+## Features
 
-## Overview
-
-AIMLAB-VR-DataStreamer is a cross-platform C++ library for streaming VR tracking data over network protocols. It provides a unified API for capturing and transmitting VR device data (HMD, controllers, trackers) to remote systems for research and experimentation.
-
-### Key Features
-
-- **Platform Agnostic**: Works on Windows, Linux, and macOS
-- **Multiple Network Protocols**: UDP, TCP, and WebSocket support
-- **Flexible Device Support**: Mock devices for testing, extensible for real VR hardware
-- **High Performance**: Optimized for low-latency real-time streaming
-- **Thread-Safe**: Built-in concurrency support
-- **Comprehensive Logging**: Debug and monitor system behavior
-- **Easy Integration**: Simple API with extensive examples
-
-## Quick Start
-
-### Prerequisites
-
-- CMake 3.15+
-- C++17 compatible compiler
-- See [BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md) for details
-
-### Building
-
-```bash
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
-```
-
-### Running Examples
-
-```bash
-# Basic streaming example
-./build/bin/basic_streaming_example
-
-# Advanced example with monitoring
-./build/bin/advanced_streaming_example
-
-# Network receiver
-./build/bin/network_receiver_example
-```
+- **Automatic Peer Discovery**: Nodes automatically discover each other on the local network using UDP broadcast
+- **Reliable Handshake Protocol**: Three-way handshake ensures reliable connection establishment
+- **Bidirectional Communication**: Full-duplex data exchange between peers
+- **Heartbeat Mechanism**: Monitors connection health and detects disconnections
+- **Thread-Safe Message Queuing**: Efficient message handling with concurrent operations
+- **Cross-Platform Support**: Works on Windows, Linux, and macOS
+- **Language Interoperability**: C++ and Python implementations can communicate seamlessly
 
 ## Architecture
 
-The library consists of several core components:
-
-- **VRDataStreamer**: Main facade for streaming operations
-- **VRDevice**: Abstract interface for VR hardware (mock implementation included)
-- **NetworkManager**: Platform-agnostic networking (UDP/TCP)
-- **DataPacket**: Serialization/deserialization of VR data
-- **Config**: Configuration management
-- **Logger**: Thread-safe logging system
-
-## Usage Example
-
-```cpp
-#include "aimlab-vr-datastreamer/VRDataStreamer.h"
-
-using namespace AimlabVR;
-
-int main() {
-    // Configure
-    StreamConfig config;
-    config.serverAddress = "127.0.0.1";
-    config.serverPort = 8888;
-    config.protocol = NetworkProtocol::UDP;
-    config.updateRate = 90;  // 90 Hz
-    
-    // Initialize with mock VR device
-    VRDataStreamer streamer;
-    if (!streamer.initialize(config, true)) {
-        return 1;
-    }
-    
-    // Start streaming
-    streamer.startStreaming();
-    
-    // Stream for 10 seconds
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-    
-    // Cleanup
-    streamer.stopStreaming();
-    streamer.shutdown();
-    
-    return 0;
-}
-```
-
-## Project Structure
+### Protocol Stack
 
 ```
-AIMLAB-VR-DataStreamer/
-├── include/
-│   └── aimlab-vr-datastreamer/    # Public headers
-├── src/                            # Implementation files
-├── examples/                       # Example applications
-├── tests/                          # Unit and integration tests
-├── config/                         # Configuration files
-├── docs/                           # Documentation
-├── CMakeLists.txt                  # Build configuration
-└── README.md                       # This file
+Application Layer    : VR Data (JSON formatted)
+Protocol Layer      : Custom AIMLAB Protocol
+Transport Layer     : UDP with reliability features
+Network Layer       : IPv4
 ```
 
-## Documentation
+### Message Types
 
-- [API Reference](docs/API_REFERENCE.md) - Complete API documentation
-- [Build Instructions](docs/BUILD_INSTRUCTIONS.md) - Platform-specific build guide
-- [Usage Guide](docs/USAGE_GUIDE.md) - Comprehensive usage instructions
+1. **DISCOVER** - Broadcast to find peers on network
+2. **ACKNOWLEDGE** - Response to discovery
+3. **HANDSHAKE_START** - Initiate connection
+4. **HANDSHAKE_ACK** - Acknowledge handshake
+5. **HANDSHAKE_COMPLETE** - Finalize connection
+6. **DATA** - Application data transfer
+7. **HEARTBEAT** - Keep-alive messages
+8. **DISCONNECT** - Graceful disconnection
 
-## Features in Detail
+### Network Flow
 
-### Network Streaming
+```
+Node A                          Node B
+   |                               |
+   |----DISCOVER (broadcast)------>|
+   |<---ACKNOWLEDGE----------------|
+   |----HANDSHAKE_START----------->|
+   |<---HANDSHAKE_ACK--------------|
+   |----HANDSHAKE_COMPLETE-------->|
+   |                               |
+   |<===== DATA EXCHANGE =========>|
+   |                               |
+   |----HEARTBEAT----------------->|
+   |<---HEARTBEAT------------------|
+   |                               |
+   |----DISCONNECT---------------->|
+```
 
-- **UDP**: Low-latency, connectionless streaming (default)
-- **TCP**: Reliable, connection-oriented streaming
-- **Configurable update rates**: 60 Hz to 120+ Hz
-- **Automatic reconnection**: Built-in error handling
+## Requirements
 
-### Data Format
+### C++ Implementation
+- C++17 or later
+- POSIX sockets (Linux/macOS) or Winsock2 (Windows)
+- pthread library (Linux/macOS)
 
-- **Binary serialization**: Compact, efficient (~200-500 bytes per packet)
-- **JSON serialization**: Human-readable, interoperable
-- **Extensible packet format**: Easy to add custom data
+### Python Implementation
+- Python 3.7 or later
+- Standard library only (no external dependencies)
 
-### VR Device Support
+## Building and Running
 
-- **Mock devices**: Full simulation for testing without hardware
-- **Extensible architecture**: Easy to integrate OpenVR, Oculus, OpenXR
-- **Multiple device types**: HMD, controllers, trackers
-- **Full 6DOF tracking**: Position and rotation
-- **Button/input states**: Triggers, grips, touchpads
+### C++ Version
 
-### Logging and Monitoring
+#### Linux/macOS
+```bash
+# Compile
+g++ -std=c++17 -pthread aimlab_network_cpp.cpp -o aimlab_network
 
-- **Multiple log levels**: Debug, Info, Warning, Error, Critical
-- **File and console output**: Flexible logging destinations
-- **Thread-safe logging**: Safe for concurrent operations
-- **Streaming statistics**: Packet counts, rates, uptime
+# Run with discovery enabled (default)
+./aimlab_network
 
-## Testing
+# Run without discovery
+./aimlab_network --no-discovery
+```
 
-The library includes comprehensive tests:
+#### Windows
+```cmd
+# Compile with Visual Studio
+cl /std:c++17 aimlab_network_cpp.cpp /Fe:aimlab_network.exe ws2_32.lib
+
+# Or with MinGW
+g++ -std=c++17 -pthread aimlab_network_cpp.cpp -o aimlab_network.exe -lws2_32
+
+# Run
+aimlab_network.exe
+```
+
+### Python Version
 
 ```bash
-# Unit tests
-./build/bin/test_datapacket
-./build/bin/test_logger
+# Make executable (Linux/macOS)
+chmod +x aimlab_network_python.py
 
-# Integration test
-./build/bin/test_integration
+# Run with discovery enabled (default)
+python3 aimlab_network_python.py
+
+# Run without discovery
+python3 aimlab_network_python.py --no-discovery
+
+# Run with debug logging
+python3 aimlab_network_python.py --debug
+
+# Run on custom port
+python3 aimlab_network_python.py --port 45002
+```
+
+## Usage
+
+### Interactive Commands
+
+Both implementations support the following commands:
+
+- `send <message>` - Send a message to all connected peers
+- `peers` - List all connected peers
+- `status` - Show system status (Python only)
+- `simulate` - Toggle VR data simulation (Python only)
+- `help` - Display available commands
+- `quit` or `exit` - Gracefully shutdown the application
+
+### Example Session
+
+Terminal 1 (C++ Node):
+```
+$ ./aimlab_network
+Network manager started on port 45001
+Discovery worker started
+Receive worker started
+Send worker started
+Heartbeat worker started
+
+=== AIMLAB VR Data Streamer Started ===
+Commands:
+  'send <message>' - Send message to all peers
+  'peers' - List connected peers
+  'quit' - Exit application
+========================================
+
+Discovered new peer: 192.168.1.100:45001
+Initiating handshake with 192.168.1.100:45001
+Handshake complete with 192.168.1.100:45001
+Peer connected: 192.168.1.100:45001
+
+send Hello from C++
+Sent: {"type":"vr_transform","timestamp":1234567890,"data":"Hello from C++"}
+```
+
+Terminal 2 (Python Node):
+```
+$ python3 aimlab_network_python.py
+2024-01-01 12:00:00 - AIMLAB_VR - INFO - Socket initialized on port 45001
+2024-01-01 12:00:00 - AIMLAB_VR - INFO - Network manager started on port 45001
+
+==================================================
+          AIMLAB VR Data Streamer
+               Python Edition
+==================================================
+Port: 45001
+Protocol: v1.0
+==================================================
+
+Commands:
+  'send <message>' - Send message to all peers
+  'peers'         - List connected peers
+  'simulate'      - Toggle VR data simulation
+  'status'        - Show system status
+  'help'          - Show this help message
+  'quit'          - Exit application
+
+2024-01-01 12:00:01 - AIMLAB_VR - INFO - Discovered new peer: 192.168.1.101:45001
+2024-01-01 12:00:01 - AIMLAB_VR - INFO - Peer connected: 192.168.1.101:45001
+
+[VR Data from 192.168.1.101:45001]
+  Type: vr_transform
+  Timestamp: 2024-01-01 12:00:02
+  Data: Hello from C++
+```
+
+## Integration Guide
+
+### Sending Custom VR Data
+
+#### C++ Example
+```cpp
+// Create custom VR data
+std::stringstream vr_data;
+vr_data << "{"
+        << "\"type\":\"head_position\","
+        << "\"x\":" << head_x << ","
+        << "\"y\":" << head_y << ","
+        << "\"z\":" << head_z << ","
+        << "\"timestamp\":" << get_timestamp()
+        << "}";
+
+// Send to all peers
+network.broadcast_to_peers(vr_data.str());
+```
+
+#### Python Example
+```python
+# Create custom VR data
+vr_data = {
+    'type': 'head_position',
+    'x': head_x,
+    'y': head_y,
+    'z': head_z,
+    'timestamp': time.time_ns()
+}
+
+# Send to all peers
+streamer.send_vr_data(vr_data)
+```
+
+### Handling Incoming Data
+
+#### C++ Example
+```cpp
+// Set custom message handler
+network.set_message_handler([](const AIMLAB::Message& msg) {
+    if (msg.type == AIMLAB::MessageType::DATA) {
+        // Parse JSON data
+        auto vr_data = parse_json(msg.payload);
+        // Process VR data
+        update_vr_state(vr_data);
+    }
+});
+```
+
+#### Python Example
+```python
+# Custom message handler
+def handle_vr_update(msg: Message):
+    if msg.type == MessageType.DATA:
+        vr_data = json.loads(msg.payload)
+        # Process VR data
+        update_vr_state(vr_data)
+
+# Set handler
+network.set_message_handler(handle_vr_update)
 ```
 
 ## Configuration
 
-Example configuration file (`config/default_config.json`):
+### Network Parameters
 
-```json
-{
-  "serverAddress": "127.0.0.1",
-  "serverPort": 8888,
-  "protocol": 0,
-  "updateRate": 90,
-  "enableLogging": true,
-  "logLevel": 1,
-  "logFilePath": "aimlab_vr_streamer.log"
-}
+Edit the `NetworkConfig` class in either implementation:
+
+```cpp
+// C++
+class NetworkConfig {
+    static constexpr int DISCOVERY_PORT = 45000;
+    static constexpr int DEFAULT_DATA_PORT = 45001;
+    static constexpr int BUFFER_SIZE = 4096;
+    static constexpr int DISCOVERY_INTERVAL_MS = 1000;
+    static constexpr int HEARTBEAT_INTERVAL_MS = 5000;
+    static constexpr int CONNECTION_TIMEOUT_MS = 15000;
+};
 ```
 
-## Performance
+```python
+# Python
+class NetworkConfig:
+    DISCOVERY_PORT: int = 45000
+    DEFAULT_DATA_PORT: int = 45001
+    BUFFER_SIZE: int = 4096
+    DISCOVERY_INTERVAL_MS: int = 1000
+    HEARTBEAT_INTERVAL_MS: int = 5000
+    CONNECTION_TIMEOUT_MS: int = 15000
+```
 
-Typical performance characteristics:
+## Troubleshooting
 
-- **Update rate**: 60-120 Hz
-- **Latency**: < 5ms (UDP, local network)
-- **Packet size**: 200-500 bytes (binary), 1-2 KB (JSON)
-- **CPU usage**: < 2% on modern hardware
-- **Network bandwidth**: ~50-200 KB/s per client
+### Common Issues
 
-## Future Enhancements
+1. **Peers not discovering each other**
+   - Check firewall settings (allow UDP ports 45000-45001)
+   - Ensure broadcast is enabled on the network
+   - Verify nodes are on the same subnet
 
-- OpenVR integration
-- Oculus SDK integration
-- OpenXR support
-- WebSocket protocol
-- Data compression
-- Encryption/authentication
-- Multi-client broadcasting
+2. **Connection timeouts**
+   - Check network latency
+   - Increase `CONNECTION_TIMEOUT_MS` value
+   - Verify no packet loss on the network
+
+3. **Build errors on Windows**
+   - Ensure `ws2_32.lib` is linked
+   - Use appropriate compiler flags for your toolchain
+
+4. **Python permission errors**
+   - May need to run with elevated privileges for broadcast
+   - Check socket permissions on the system
+
+### Debug Mode
+
+Enable detailed logging:
+
+**C++**: Add debug output in relevant functions
+```cpp
+#define DEBUG_MODE 1
+#if DEBUG_MODE
+    std::cout << "[DEBUG] " << message << std::endl;
+#endif
+```
+
+**Python**: Use the debug flag
+```bash
+python3 aimlab_network_python.py --debug
+```
+
+## Performance Considerations
+
+- **Message Size**: Keep messages under 4KB for optimal performance
+- **Heartbeat Frequency**: Default 5 seconds, adjust based on network reliability
+- **Discovery Interval**: 1 second default, increase to reduce network traffic
+- **Thread Count**: 4 worker threads per node (discovery, receive, send, heartbeat)
+- **Queue Size**: Unbounded queues, implement limits for production use
+
+## Security Notes
+
+This implementation focuses on functionality and does not include:
+- Encryption (add TLS/DTLS for production)
+- Authentication (implement token-based auth)
+- Message validation (add checksums/signatures)
+- Rate limiting (implement to prevent DoS)
+
+## License
+
+This project is provided as-is for educational and development purposes.
 
 ## Contributing
 
-This is a research project. For questions or collaboration:
+To extend the functionality:
 
-**Contact:** Pi Ko (pi.ko@nyu.edu)
+1. **Add new message types**: Extend the `MessageType` enum
+2. **Implement encryption**: Add encryption layer in serialize/deserialize
+3. **Add compression**: Compress large VR data payloads
+4. **Implement reliable UDP**: Add sequence numbers and retransmission
+5. **Add metrics**: Track latency, packet loss, throughput
 
+## Contact
 
-## Acknowledgments
-
-Developed for AIMLAB experiments at NYUAD.
-
----
-
-**Version:** v1.0  
-**Last Updated:** 21 October 2025  
-**Author:** Pi Ko (pi.ko@nyu.edu)
+For questions and support regarding the AIMLAB VR Data Streamer, please refer to the inline documentation and code comments.
