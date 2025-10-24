@@ -86,7 +86,7 @@ class MessageType(IntEnum):
     DATA = 5
     HEARTBEAT = 6
     DISCONNECT = 7
-    ERROR = 8
+    MSG_ERROR = 8  # Renamed from ERROR to avoid Windows conflicts
 
 
 @dataclass
@@ -127,12 +127,12 @@ class Message:
                 msg_type = MessageType(int(parts[0]))
                 payload = parts[1]
             else:
-                msg_type = MessageType.ERROR
+                msg_type = MessageType.MSG_ERROR
                 payload = ""
             return cls(type=msg_type, payload=payload)
         except Exception as e:
             logger.error(f"Failed to deserialize message: {e}")
-            return cls(type=MessageType.ERROR, payload=str(e))
+            return cls(type=MessageType.MSG_ERROR, payload=str(e))
 
 
 @dataclass

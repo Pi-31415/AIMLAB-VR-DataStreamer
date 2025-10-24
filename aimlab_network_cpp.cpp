@@ -49,6 +49,11 @@
     typedef int SOCKET;
 #endif
 
+// Undefine Windows macros that conflict with our code
+#ifdef ERROR
+#undef ERROR
+#endif
+
 namespace AIMLAB {
 
 /**
@@ -80,7 +85,7 @@ enum class MessageType {
     DATA,
     HEARTBEAT,
     DISCONNECT,
-    ERROR
+    MSG_ERROR  // Renamed from ERROR to avoid Windows macro conflict
 };
 
 /**
@@ -163,7 +168,7 @@ public:
         if (setsockopt(socket_fd, SOL_SOCKET, SO_BROADCAST, 
                       (const char*)&broadcast_enable, sizeof(broadcast_enable)) < 0) {
             std::cerr << "Failed to enable broadcast" << std::endl;
-            closesocket(socket_fd);
+            ::closesocket(socket_fd);
             return false;
         }
         
@@ -182,7 +187,7 @@ public:
         
         if (bind(socket_fd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
             std::cerr << "Failed to bind to port " << port << std::endl;
-            closesocket(socket_fd);
+            ::closesocket(socket_fd);
             return false;
         }
         
@@ -268,7 +273,7 @@ public:
      */
     void close() {
         if (is_valid && socket_fd != INVALID_SOCKET) {
-            closesocket(socket_fd);
+            ::closesocket(socket_fd);
             socket_fd = INVALID_SOCKET;
             is_valid = false;
         }
