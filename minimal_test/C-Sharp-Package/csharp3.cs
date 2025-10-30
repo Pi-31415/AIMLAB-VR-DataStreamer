@@ -644,15 +644,18 @@ namespace AIMLAB.VR
                 yield break;
             }
 
-            // Perform handshake
+            // Start receive thread BEFORE handshake (IMPORTANT!)
+            receiveThread = new Thread(ReceiveThread);
+            receiveThread.Start();
+            LogMessage("Receive thread started", LogLevel.Info);
+            yield return new WaitForSeconds(0.5f); // Let it initialize
+
+            // THEN perform handshake
             yield return StartCoroutine(HandshakeCoroutine());
 
+            // Check if handshake succeeded
             if (isConnected)
             {
-                // Start receive thread
-                receiveThread = new Thread(ReceiveThread);
-                receiveThread.Start();
-
                 LogMessage("Connection established!", LogLevel.Success);
             }
         }
@@ -741,40 +744,48 @@ namespace AIMLAB.VR
         private IEnumerator HandshakeCoroutine()
         {
             LogMessage("Starting handshake...", LogLevel.Info);
+            LogMessage($"Sending handshake to {peerAddress}:{peerPort}", LogLevel.Info);
+            LogMessage($"My data port is {DATA_PORT}", LogLevel.Info);
 
             string handshakeMsg = $"{MSG_HANDSHAKE}:{NODE_ID}";
-            bool handshakeSent = false;
             bool handshakeReceived = false;
             int attempts = 0;
 
-            while (attempts < 10 && (!handshakeSent || !handshakeReceived))
+            // Make sure receive thread is running BEFORE handshake
+            if (receiveThread == null || !receiveThread.IsAlive)
             {
-                if (!handshakeSent)
-                {
-                    SendMessage(handshakeMsg);
-                    LogMessage($"Sending handshake (attempt {attempts + 1})", LogLevel.Debug);
-                }
+                receiveThread = new Thread(ReceiveThread);
+                receiveThread.Start();
+                LogMessage("Started receive thread for handshake", LogLevel.Debug);
+                yield return new WaitForSeconds(0.5f); // Give it time to start
+            }
 
-                // Check for response (handled in receive thread)
+            while (attempts < 10 && !handshakeReceived)
+            {
+                SendMessage(handshakeMsg);
+                LogMessage($"Sending handshake (attempt {attempts + 1})", LogLevel.Debug);
+
+                // Wait and check for response
                 yield return new WaitForSeconds(0.5f);
 
-                // This would be set by receive thread
+                // Check if handshake was received (set by receive thread)
                 lock (lockObject)
                 {
                     if (fileOpen) // Using as a flag for successful handshake
                     {
                         handshakeReceived = true;
-                        handshakeSent = true;
-                        fileOpen = false; // Reset
+                        fileOpen = false; // Reset the flag
                     }
                 }
 
                 attempts++;
             }
 
-            if (handshakeSent && handshakeReceived)
+            if (handshakeReceived)
             {
                 LogMessage("Handshake complete!", LogLevel.Success);
+                // Keep connection alive
+                isConnected = true;
             }
             else
             {
@@ -783,10 +794,14 @@ namespace AIMLAB.VR
             }
         }
 
+
         private void ReceiveThread()
         {
             byte[] buffer = new byte[BUFFER_SIZE];
             IPEndPoint receiveEndpoint = new IPEndPoint(IPAddress.Any, 0);
+
+            // ADD THIS:
+            RunOnMainThread(() => LogMessage($"Receive thread started, listening on port {DATA_PORT}", LogLevel.Info));
 
             while (threadRunning && isConnected)
             {
@@ -794,6 +809,9 @@ namespace AIMLAB.VR
                 {
                     buffer = dataSocket.Receive(ref receiveEndpoint);
                     string received = Encoding.UTF8.GetString(buffer);
+
+                    // ADD THIS DEBUG:
+                    RunOnMainThread(() => LogMessage($"Received from {receiveEndpoint}: {received}", LogLevel.Debug));
 
                     ProcessReceivedMessage(received);
                 }
