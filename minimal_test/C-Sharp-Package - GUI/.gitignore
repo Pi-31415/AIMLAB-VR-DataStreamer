@@ -1,0 +1,82 @@
+# =====================================
+# AIMLAB-VR-Data Streamer - .gitignore
+# Author: Pi Ko (pi.ko@nyu.edu)
+# Date: 02 November 2025
+# =====================================
+
+# Compiled executables
+*.exe
+*.out
+*.app
+
+# Object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# C++ build artifacts
+*.gch
+*.pch
+*.lib
+*.a
+*.so
+*.dylib
+*.dll
+
+# Data files (keep structure, ignore content)
+aimlab_data/*.csv
+aimlab_data/*.txt
+aimlab_data/Hi*
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# IDE and editor files
+.vscode/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Unity generated files (if Unity project is in this repo)
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+Assets/AssetStoreTools*
+*.csproj
+*.unityproj
+*.sln
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Keep important files
+!README*.md
+!*.bat
+!*.cpp
+!*.cs
+!*.h
+!*.hpp
+!.gitignore
+!.gitattributes
+
