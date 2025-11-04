@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     addLog('System initialized', 'success');
     addLog('Ready to connect to Unity and Arduino', 'info');
-    addLog('Listening on UDP port 8888 for Unity VR data', 'info');
+    addLog('Listening on UDP port 45101 for Unity VR data', 'info');
 });
 
 // ==================== Event Listeners Setup ====================
@@ -105,9 +105,9 @@ function setupEventListeners() {
  */
 async function connectToUnity() {
     elements.connectUnity.disabled = true;
-    addLog('Connecting to Unity on port 8888...', 'info');
+    addLog('Connecting to Unity on port 45101...', 'info');
     
-    const result = await window.api.connectToUnity(8888);
+    const result = await window.api.connectToUnity(45101);
     
     if (result.success) {
         elements.connectUnity.textContent = 'Connected';

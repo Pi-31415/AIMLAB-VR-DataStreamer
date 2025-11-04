@@ -3,25 +3,32 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 04 November 2025
- * Version: v2.1
+ * Version: v2.7
  * 
  * Description:
  * Main Electron process for AIMLAB VR Data Collector.
- * Handles Unity UDP data reception, Arduino serial communication,
- * CSV file recording, and application lifecycle management.
+ * Handles Unity UDP data reception with full bidirectional protocol,
+ * Arduino serial communication, CSV file recording, and application lifecycle.
  * 
  * Changelog:
- * v2.1 - 04 November 2025 - Connection fixes
- *        - Fixed Unity connection (no handshake required, data-based detection)
- *        - Fixed Arduino handshake with retry mechanism
- *        - Better serial port detection (CH340, FTDI support)
- *        - Improved error handling and cleanup
- *        - Added connection timeout based on data flow
- * v2.0 - 04 November 2025 - Major update for VR data collection
- *        - Added UDP server for Unity VR data reception
- *        - Added Serial communication for Arduino vibration motor
- *        - Implemented CSV recording with batching
- *        - Added connection handshake protocols
+ * v2.7 - 04 November 2025 - Data port conflict resolution
+ *        - Electron now uses port 45102 (not 45101 to avoid Unity conflict)
+ *        - Unity sends to 45102, Electron sends to 45101
+ *        - Each app has its own data port (no more binding conflicts)
+ * v2.6 - 04 November 2025 - setBroadcast timing fix
+ *        - Fixed EBADF error by setting broadcast AFTER bind
+ *        - Simplified broadcast to target Unity's port 45000 only
+ *        - Better error handling for broadcast operations
+ * v2.5 - 04 November 2025 - Discovery port conflict fix
+ *        - Fixed port conflict (Unity on 45000, Electron on 45001-45009)
+ *        - Added bidirectional discovery (both broadcast)
+ *        - Electron sends discovery broadcasts to Unity
+ *        - Active handshake initiation after ACK
+ *        - Proper broadcast to all discovery ports
+ * v2.4 - 04 November 2025 - Full Unity protocol implementation
+ * v2.3 - 04 November 2025 - Port configuration fix
+ * v2.2 - 04 November 2025 - Socket error fixes
+ * v2.0 - 04 November 2025 - VR data collection
  * v1.0 - 04 November 2025 - Initial implementation
  */
 
@@ -34,20 +41,35 @@ const fs = require('fs');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // Global Variables
-let mainWindow;
-let udpServer;
-let serialPort;
-let csvWriter;
+let mainWindow = null;
+let discoveryServer = null;  // For discovery on ports 45001-45009 (NOT 45000!)
+let dataServer = null;       // For data on port 45101
+let serialPort = null;
+let csvWriter = null;
 let isRecording = false;
-let currentFilename;
+let currentFilename = null;
 let dataBuffer = [];
 let unityConnected = false;
 let arduinoConnected = false;
 let handshakeInterval = null;
+let unityEndpoint = null;
+let discoveryInterval = null;
+let myDiscoveryPort = 0;
 
-// Unity Connection Management (without requiring handshake from Unity)
-let lastDataReceived = null;
-const DATA_TIMEOUT = 5000; // Consider disconnected after 5 seconds of no data
+// Protocol Constants (must match Unity)
+const DISCOVERY_BASE_PORT = 45000;
+const DATA_PORT = 45102;  // OUR data port (Electron listens here)
+const UNITY_DATA_PORT = 45101;  // Unity's data port (Unity listens here)
+const NODE_ID = "AIMLAB_CPP";  // Unity expects this
+const PEER_ID = "AIMLAB_UNITY";  // Unity identifies as this
+
+// Protocol Messages
+const MSG_DISCOVER = "DISCOVER";
+const MSG_ACKNOWLEDGE = "ACK";
+const MSG_HANDSHAKE = "HANDSHAKE";
+const MSG_READY = "READY";
+const MSG_DATA = "DATA";
+const MSG_KEEPALIVE = "KEEPALIVE";
 
 /**
  * Creates the main application window
@@ -75,20 +97,73 @@ function createWindow() {
   // Uncomment for debugging
   // mainWindow.webContents.openDevTools();
 
-  mainWindow.on('closed', function () {
-    // Cleanup on close
-    if (udpServer) udpServer.close();
-    if (serialPort && serialPort.isOpen) serialPort.close();
-    if (unityCheckInterval) clearInterval(unityCheckInterval);
-    if (handshakeInterval) clearInterval(handshakeInterval);
+  // Handle window close
+  mainWindow.on('closed', () => {
+    cleanupConnections();
     mainWindow = null;
   });
 }
 
 /**
+ * Cleanup function - Properly close all connections
+ */
+function cleanupConnections() {
+  // Stop intervals
+  if (discoveryInterval) {
+    clearInterval(discoveryInterval);
+    discoveryInterval = null;
+  }
+  
+  if (handshakeInterval) {
+    clearInterval(handshakeInterval);
+    handshakeInterval = null;
+  }
+  
+  // Close discovery server
+  if (discoveryServer) {
+    try {
+      discoveryServer.close(() => {
+        console.log('Discovery server closed');
+      });
+    } catch (err) {
+      console.log('Discovery server cleanup:', err.message);
+    }
+    discoveryServer = null;
+  }
+  
+  // Close data server
+  if (dataServer) {
+    try {
+      dataServer.close(() => {
+        console.log('Data server closed');
+      });
+    } catch (err) {
+      console.log('Data server cleanup:', err.message);
+    }
+    dataServer = null;
+  }
+  
+  // Close serial port
+  if (serialPort && serialPort.isOpen) {
+    try {
+      serialPort.close();
+      console.log('Serial port closed');
+    } catch (err) {
+      console.log('Serial port cleanup:', err.message);
+    }
+    serialPort = null;
+  }
+  
+  // Reset connection states
+  unityConnected = false;
+  arduinoConnected = false;
+  unityEndpoint = null;
+}
+
+/**
  * Logging Helper - Sends log messages to renderer
  * @param {string} message - Log message
- * @param {string} type - Message type (info, success, error, warning, arduino)
+ * @param {string} type - Message type (info, success, error, warning, arduino, debug)
  */
 function sendLog(message, type = 'info') {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -101,70 +176,309 @@ function sendLog(message, type = 'info') {
   console.log(`[${type.toUpperCase()}] ${message}`);
 }
 
-// ==================== Unity UDP Connection Handler ====================
-
-let unityCheckInterval = null;
+// ==================== Unity Connection with Full Protocol ====================
 
 /**
- * Connects to Unity VR application via UDP
+ * Connects to Unity VR application with full bidirectional protocol
+ * Unity uses port 45000, Electron uses 45001-45009 to avoid conflict
  */
-ipcMain.handle('connect-unity', async (event, port = 8888) => {
+ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
   try {
-    // Close existing server if any
-    if (udpServer) {
-      udpServer.close();
-      udpServer = null;
+    // Clean up existing servers
+    if (discoveryServer) {
+      try {
+        discoveryServer.close();
+      } catch (err) {
+        console.log('Discovery server cleanup:', err.message);
+      }
+      discoveryServer = null;
     }
     
-    udpServer = dgram.createSocket('udp4');
+    if (dataServer) {
+      try {
+        dataServer.close();
+      } catch (err) {
+        console.log('Data server cleanup:', err.message);
+      }
+      dataServer = null;
+    }
     
-    udpServer.on('error', (err) => {
-      sendLog(`Unity connection error: ${err.message}`, 'error');
-      unityConnected = false;
-      updateStatus();
+    // Stop any discovery broadcasts
+    if (discoveryInterval) {
+      clearInterval(discoveryInterval);
+      discoveryInterval = null;
+    }
+    
+    // Reset connection state
+    unityConnected = false;
+    unityEndpoint = null;
+    
+    sendLog('Starting Unity connection...', 'info');
+    
+    // Step 1: Create discovery server - AVOID port 45000 (Unity uses it)
+    discoveryServer = dgram.createSocket('udp4');
+    
+    discoveryServer.on('error', (err) => {
+      sendLog(`Discovery server error: ${err.message}`, 'error');
     });
     
-    udpServer.on('message', (msg, rinfo) => {
-      handleUnityData(msg.toString(), rinfo);
-    });
-    
-    udpServer.on('listening', () => {
-      const address = udpServer.address();
-      sendLog(`Unity UDP server listening on ${address.address}:${address.port}`, 'success');
-      sendLog('Waiting for Unity data stream...', 'info');
+    discoveryServer.on('message', (msg, rinfo) => {
+      const message = msg.toString();
+      sendLog(`Discovery received: ${message}`, 'debug');
       
-      // Check for Unity data periodically
-      if (unityCheckInterval) clearInterval(unityCheckInterval);
-      unityCheckInterval = setInterval(checkUnityConnection, 1000);
+      // Parse discovery message: "DISCOVER:AIMLAB_UNITY:dataPort:discoveryPort"
+      const parts = message.split(':');
+      if (parts[0] === MSG_DISCOVER && parts[1] === PEER_ID) {
+        // Unity found!
+        const unityDataPort = parseInt(parts[2]) || UNITY_DATA_PORT;
+        const unityDiscoveryPort = parts.length > 3 ? parseInt(parts[3]) : 45000;
+        
+        sendLog(`Unity discovered! Data port: ${unityDataPort}, Discovery port: ${unityDiscoveryPort}`, 'success');
+        
+        // Send ACK with OUR data port (45102) so Unity knows where to send data
+        const ackMessage = `${MSG_ACKNOWLEDGE}:${NODE_ID}:${DATA_PORT}`;
+        discoveryServer.send(
+          Buffer.from(ackMessage), 
+          unityDiscoveryPort,  // Send to Unity's discovery port (45000)
+          rinfo.address,
+          (err) => {
+            if (!err) {
+              sendLog(`Sent ACK to Unity (our data port: ${DATA_PORT})`, 'success');
+              
+              // Store Unity's endpoint for sending data TO Unity
+              unityEndpoint = { address: rinfo.address, port: UNITY_DATA_PORT };
+              
+              // Initiate handshake on Unity's data port after receiving discovery
+              setTimeout(() => {
+                if (dataServer && unityEndpoint) {
+                  const handshakeMsg = `${MSG_HANDSHAKE}:${NODE_ID}`;
+                  dataServer.send(
+                    Buffer.from(handshakeMsg),
+                    UNITY_DATA_PORT,  // Send to Unity's port (45101)
+                    unityEndpoint.address,
+                    (err) => {
+                      if (!err) {
+                        sendLog(`Sent HANDSHAKE to Unity on port ${UNITY_DATA_PORT}`, 'info');
+                      }
+                    }
+                  );
+                }
+              }, 500);
+            } else {
+              sendLog(`Failed to send ACK: ${err.message}`, 'error');
+            }
+          }
+        );
+      }
+      // Also handle ACK messages from Unity
+      else if (parts[0] === MSG_ACKNOWLEDGE && parts[1] === PEER_ID) {
+        const unityDataPort = parseInt(parts[2]) || UNITY_DATA_PORT;
+        sendLog(`Received ACK from Unity, data port: ${unityDataPort}`, 'success');
+        unityEndpoint = { address: rinfo.address, port: UNITY_DATA_PORT };
+      }
     });
     
-    udpServer.bind(port);
+    // Bind discovery server to ports 45001-45009 (NOT 45000 - Unity is using it!)
+    let bound = false;
+    
+    // Start from 45001, NOT 45000
+    for (let i = 1; i < 10; i++) {
+      try {
+        const tryPort = DISCOVERY_BASE_PORT + i;
+        await new Promise((resolve, reject) => {
+          discoveryServer.bind(tryPort, '0.0.0.0', (err) => {
+            if (err) {
+              reject(err);
+            } else {
+              // Set broadcast AFTER successful bind
+              try {
+                discoveryServer.setBroadcast(true);
+                myDiscoveryPort = tryPort;
+                bound = true;
+                resolve();
+              } catch (broadcastErr) {
+                reject(broadcastErr);
+              }
+            }
+          });
+        });
+        
+        sendLog(`Discovery server on port ${myDiscoveryPort}`, 'success');
+        sendLog(`Unity is on port 45000, we are on port ${myDiscoveryPort}`, 'info');
+        break;
+      } catch (err) {
+        console.log(`Port ${DISCOVERY_BASE_PORT + i} failed:`, err.message);
+        if (i === 9) {
+          sendLog('Could not bind any discovery port (45001-45009)', 'error');
+          throw new Error('Could not bind discovery port');
+        }
+      }
+    }
+    
+    if (!bound) {
+      throw new Error('Failed to bind discovery server');
+    }
+    
+    // Step 2: Create data server for handshake and data
+    dataServer = dgram.createSocket('udp4');
+    
+    dataServer.on('message', (msg, rinfo) => {
+      const message = msg.toString();
+      
+      // Handle different message types
+      if (message.startsWith(MSG_HANDSHAKE)) {
+        sendLog(`Received HANDSHAKE from Unity`, 'success');
+        
+        // Send READY response immediately
+        const readyMessage = `${MSG_READY}:${NODE_ID}`;
+        dataServer.send(
+          Buffer.from(readyMessage),
+          rinfo.port,
+          rinfo.address,
+          (err) => {
+            if (!err) {
+              sendLog('Sent READY to Unity - connection established!', 'success');
+              unityConnected = true;
+              updateStatus();
+              
+              // Stop discovery broadcasts
+              if (discoveryInterval) {
+                clearInterval(discoveryInterval);
+                discoveryInterval = null;
+              }
+            } else {
+              sendLog(`Failed to send READY: ${err.message}`, 'error');
+            }
+          }
+        );
+      }
+      else if (message.startsWith(MSG_READY)) {
+        sendLog('Unity confirmed READY - fully connected!', 'success');
+        unityConnected = true;
+        updateStatus();
+        
+        // Stop discovery broadcasts
+        if (discoveryInterval) {
+          clearInterval(discoveryInterval);
+          discoveryInterval = null;
+        }
+      }
+      else if (message.startsWith(MSG_DATA)) {
+        // Actual VR data
+        if (!unityConnected) {
+          unityConnected = true;
+          sendLog('Unity connected and sending data!', 'success');
+          updateStatus();
+        }
+        handleUnityData(message, rinfo);
+      }
+      else if (message.startsWith(MSG_KEEPALIVE)) {
+        // Respond to keepalive
+        const keepaliveResponse = `${MSG_KEEPALIVE}:${NODE_ID}`;
+        dataServer.send(Buffer.from(keepaliveResponse), rinfo.port, rinfo.address);
+      }
+      else {
+        // Try parsing as raw CSV data (backwards compatibility)
+        handleUnityData(message, rinfo);
+      }
+    });
+    
+    dataServer.on('error', (err) => {
+      sendLog(`Data server error: ${err.message}`, 'error');
+    });
+    
+    // Bind data server to 45101
+    await new Promise((resolve, reject) => {
+      dataServer.bind(DATA_PORT, '0.0.0.0', (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    sendLog(`Data server listening on port ${DATA_PORT} (our port)`, 'success');
+    sendLog(`Unity will send data to our port ${DATA_PORT}`, 'info');
+    sendLog(`We will send to Unity's port ${UNITY_DATA_PORT}`, 'info');
+    
+    // Step 3: Broadcast our own discovery messages to find Unity
+    const broadcastDiscovery = () => {
+      if (!discoveryServer || unityConnected) return;
+      
+      try {
+        const discoverMsg = `${MSG_DISCOVER}:${NODE_ID}:${DATA_PORT}:${myDiscoveryPort}`;
+        const broadcastAddr = '255.255.255.255';
+        
+        // Send to Unity's discovery port (45000)
+        discoveryServer.send(
+          Buffer.from(discoverMsg),
+          45000,  // Unity's discovery port
+          broadcastAddr,
+          (err) => {
+            if (!err) {
+              sendLog('Sent discovery broadcast', 'debug');
+            } else {
+              console.log('Broadcast error:', err.message);
+            }
+          }
+        );
+      } catch (err) {
+        console.log('Broadcast error:', err.message);
+      }
+    };
+    
+    // Broadcast discovery every 2 seconds until connected
+    discoveryInterval = setInterval(() => {
+      if (unityConnected) {
+        clearInterval(discoveryInterval);
+        discoveryInterval = null;
+      } else {
+        broadcastDiscovery();
+      }
+    }, 2000);
+    
+    // Initial broadcast
+    setTimeout(broadcastDiscovery, 500);
+    
+    sendLog('Waiting for Unity...', 'info');
+    sendLog('Make sure Unity VR app is running!', 'info');
+    sendLog('Unity should be on port 45000', 'info');
+    
     return { success: true };
     
   } catch (error) {
-    sendLog(`Failed to start UDP server: ${error.message}`, 'error');
+    sendLog(`Failed to start Unity connection: ${error.message}`, 'error');
     return { success: false, error: error.message };
   }
 });
 
 /**
- * Handles incoming Unity data (works with actual Unity data format)
+ * Handle Unity VR data with protocol support
  * @param {string} data - Raw data string from Unity
  * @param {object} rinfo - Remote info object
  */
 function handleUnityData(data, rinfo) {
   try {
-    lastDataReceived = Date.now();
-    
-    // Mark Unity as connected when we receive any data
+    // Mark as connected if not already
     if (!unityConnected) {
       unityConnected = true;
-      sendLog(`Unity connected from ${rinfo.address}:${rinfo.port}`, 'success');
+      sendLog(`Unity connected and sending data from ${rinfo.address}:${rinfo.port}`, 'success');
       updateStatus();
     }
     
-    // Parse the actual Unity data format
-    const parsedData = parseUnityData(data);
+    // Remove "DATA:" prefix if present
+    let dataString = data;
+    if (dataString.startsWith('DATA:')) {
+      // Format: "DATA:type:values" or "DATA:values"
+      const colonIndex = dataString.indexOf(':', 5); // Skip first "DATA:"
+      if (colonIndex > 0) {
+        dataString = dataString.substring(colonIndex + 1); // Get everything after second colon
+      } else {
+        dataString = dataString.substring(5); // Just remove "DATA:"
+      }
+    }
+    
+    // Parse VR data
+    const parsedData = parseUnityData(dataString);
+    
     if (parsedData) {
       // Send to UI for display
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -188,12 +502,12 @@ function handleUnityData(data, rinfo) {
       }
     }
   } catch (error) {
-    sendLog(`Error processing Unity data: ${error.message}`, 'error');
+    console.error('Error handling Unity data:', error);
   }
 }
 
 /**
- * Parse Unity Data Format (based on C# streamer)
+ * Parse Unity Data Format
  * Expected format: "timestamp,posX,posY,posZ,rotX,rotY,rotZ,rotW,trigger,grip,button1,button2"
  * @param {string} dataString - Raw data string
  * @returns {object|null} Parsed data object or null
@@ -203,7 +517,7 @@ function parseUnityData(dataString) {
     const parts = dataString.trim().split(',');
     
     if (parts.length >= 12) {
-      return {
+      const parsed = {
         timestamp: parseFloat(parts[0]),
         positionX: parseFloat(parts[1]),
         positionY: parseFloat(parts[2]),
@@ -218,26 +532,22 @@ function parseUnityData(dataString) {
         secondaryButton: parts[11] === 'True' ? 1 : 0,
         receivedAt: new Date().toISOString()
       };
-    } else {
-      console.log('Incomplete data packet:', dataString);
+      
+      // Verify we got valid numbers
+      if (!isNaN(parsed.timestamp) && !isNaN(parsed.positionX)) {
+        return parsed;
+      }
     }
+    
+    // Log unexpected format occasionally to avoid spam
+    if (Math.random() < 0.01) {
+      console.log('Unexpected data format:', dataString.substring(0, 100));
+    }
+    
   } catch (error) {
     console.error('Parse error:', error);
   }
   return null;
-}
-
-/**
- * Check Unity Connection Status (based on data flow)
- */
-function checkUnityConnection() {
-  if (lastDataReceived && Date.now() - lastDataReceived > DATA_TIMEOUT) {
-    if (unityConnected) {
-      unityConnected = false;
-      sendLog('Unity connection lost (no data received)', 'warning');
-      updateStatus();
-    }
-  }
 }
 
 /**
@@ -256,19 +566,40 @@ function updateStatus() {
  * Disconnect from Unity
  */
 ipcMain.handle('disconnect-unity', async () => {
-  if (unityCheckInterval) {
-    clearInterval(unityCheckInterval);
-    unityCheckInterval = null;
+  // Stop discovery broadcasts
+  if (discoveryInterval) {
+    clearInterval(discoveryInterval);
+    discoveryInterval = null;
   }
   
-  if (udpServer) {
-    udpServer.close();
-    udpServer = null;
-    unityConnected = false;
-    lastDataReceived = null;
-    sendLog('Unity disconnected', 'info');
-    updateStatus();
+  // Close discovery server
+  if (discoveryServer) {
+    try {
+      discoveryServer.close(() => {
+        sendLog('Unity discovery server closed', 'info');
+      });
+    } catch (err) {
+      console.log('Discovery server already closed:', err.message);
+    }
+    discoveryServer = null;
   }
+  
+  // Close data server
+  if (dataServer) {
+    try {
+      dataServer.close(() => {
+        sendLog('Unity data server closed', 'info');
+      });
+    } catch (err) {
+      console.log('Data server already closed:', err.message);
+    }
+    dataServer = null;
+  }
+  
+  unityConnected = false;
+  unityEndpoint = null;
+  updateStatus();
+  
   return { success: true };
 });
 
@@ -286,24 +617,24 @@ ipcMain.handle('start-recording', async (event, filename) => {
       fs.mkdirSync(dataDir);
     }
     
-    // Generate unique filename if exists
-    let finalFilename = filename.replace(/\.csv$/i, ''); // Remove .csv if provided
+    // Clean filename - remove invalid characters
+    let baseFilename = filename.replace(/\.csv$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    let finalFilename = baseFilename;
     let counter = 1;
     let filepath = path.join(dataDir, `${finalFilename}.csv`);
     
+    // Find unique filename
     while (fs.existsSync(filepath)) {
-      filepath = path.join(dataDir, `${finalFilename}_${counter}.csv`);
+      finalFilename = `${baseFilename}_${counter}`;
+      filepath = path.join(dataDir, `${finalFilename}.csv`);
       counter++;
     }
-    
-    // Extract just the filename for display
-    const displayName = path.basename(filepath, '.csv');
     
     // Create CSV writer
     csvWriter = createCsvWriter({
       path: filepath,
       header: [
-        { id: 'timestamp', title: 'Timestamp' },
+        { id: 'timestamp', title: 'Unity_Time' },
         { id: 'positionX', title: 'Position_X' },
         { id: 'positionY', title: 'Position_Y' },
         { id: 'positionZ', title: 'Position_Z' },
@@ -315,16 +646,16 @@ ipcMain.handle('start-recording', async (event, filename) => {
         { id: 'gripValue', title: 'Grip_Value' },
         { id: 'primaryButton', title: 'Primary_Button' },
         { id: 'secondaryButton', title: 'Secondary_Button' },
-        { id: 'receivedAt', title: 'Received_At' }
+        { id: 'receivedAt', title: 'System_Time' }
       ]
     });
     
     isRecording = true;
-    currentFilename = displayName;
+    currentFilename = finalFilename;
     dataBuffer = [];
     
-    sendLog(`Recording started: ${displayName}.csv`, 'success');
-    return { success: true, filename: displayName };
+    sendLog(`Recording started: ${finalFilename}.csv`, 'success');
+    return { success: true, filename: finalFilename };
     
   } catch (error) {
     sendLog(`Failed to start recording: ${error.message}`, 'error');
@@ -349,7 +680,8 @@ ipcMain.handle('stop-recording', async () => {
     dataBuffer = [];
     
     sendLog(`Recording stopped: ${recordedFile}.csv`, 'success');
-    sendLog(`File saved in data folder`, 'info');
+    sendLog(`File saved in: ${path.join(__dirname, 'data', recordedFile + '.csv')}`, 'info');
+    
     return { success: true, filename: recordedFile };
     
   } catch (error) {
@@ -365,12 +697,29 @@ ipcMain.handle('stop-recording', async () => {
  */
 ipcMain.handle('connect-arduino', async () => {
   try {
+    // Clean up existing connection
+    if (handshakeInterval) {
+      clearInterval(handshakeInterval);
+      handshakeInterval = null;
+    }
+    
+    if (serialPort && serialPort.isOpen) {
+      try {
+        serialPort.close();
+      } catch (err) {
+        console.log('Serial cleanup:', err.message);
+      }
+      serialPort = null;
+      arduinoConnected = false;
+    }
+    
     // List all available ports
     const ports = await SerialPort.list();
     sendLog(`Found ${ports.length} serial ports`, 'info');
     
-    // Debug: List all ports
+    // Log all ports for debugging
     ports.forEach(port => {
+      console.log(`Port: ${port.path}, Manufacturer: ${port.manufacturer || 'Unknown'}`);
       sendLog(`Port: ${port.path}, Manufacturer: ${port.manufacturer || 'Unknown'}`, 'info');
     });
     
@@ -379,55 +728,51 @@ ipcMain.handle('connect-arduino', async () => {
       return port.manufacturer && (
         port.manufacturer.includes('Arduino') ||
         port.manufacturer.includes('arduino') ||
-        port.manufacturer.includes('CH340') || // Common Arduino clone chip
-        port.manufacturer.includes('FTDI')     // Another common chip
+        port.manufacturer.includes('CH340') ||
+        port.manufacturer.includes('FTDI') ||
+        port.manufacturer.includes('USB')
       );
     });
     
-    // If no Arduino found, try first available port
+    // Fallback to first available port
     if (!arduinoPort && ports.length > 0) {
       arduinoPort = ports[0];
-      sendLog(`No Arduino detected, trying ${arduinoPort.path}`, 'warning');
+      sendLog(`No Arduino detected by name, trying ${arduinoPort.path}`, 'warning');
     }
     
     if (!arduinoPort) {
       throw new Error('No serial ports found. Is Arduino plugged in?');
     }
     
-    // Close existing connection if any
-    if (serialPort && serialPort.isOpen) {
-      serialPort.close();
-    }
+    sendLog(`Opening serial port ${arduinoPort.path}...`, 'info');
     
-    sendLog(`Attempting to connect to ${arduinoPort.path}`, 'info');
-    
+    // Create serial port connection
     serialPort = new SerialPort({
       path: arduinoPort.path,
       baudRate: 9600,
-      autoOpen: false // We'll open it manually
+      autoOpen: false
     });
     
-    // Set up parser for line-by-line reading
+    // Set up line parser
     const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\r\n' }));
     
-    // Handle incoming data from Arduino
+    // Handle incoming data
     parser.on('data', (data) => {
       sendLog(`Arduino: ${data}`, 'arduino');
       
-      // Check for handshake response
+      // Check for handshake confirmation
       if (data.includes('Vibration Motor Controller Ready')) {
         arduinoConnected = true;
         sendLog('Arduino handshake confirmed!', 'success');
         updateStatus();
         
-        // Clear handshake interval
         if (handshakeInterval) {
           clearInterval(handshakeInterval);
           handshakeInterval = null;
         }
       }
       
-      // Handle motor status messages
+      // Log motor status
       if (data.includes('Motor ON') || data.includes('Motor activated')) {
         sendLog('Motor vibrating', 'success');
       }
@@ -436,16 +781,19 @@ ipcMain.handle('connect-arduino', async () => {
       }
     });
     
+    // Handle errors
     serialPort.on('error', (err) => {
-      sendLog(`Arduino error: ${err.message}`, 'error');
+      sendLog(`Arduino serial error: ${err.message}`, 'error');
       arduinoConnected = false;
       updateStatus();
     });
     
+    // Handle close
     serialPort.on('close', () => {
-      sendLog('Arduino disconnected', 'warning');
+      sendLog('Arduino serial port closed', 'warning');
       arduinoConnected = false;
       updateStatus();
+      
       if (handshakeInterval) {
         clearInterval(handshakeInterval);
         handshakeInterval = null;
@@ -460,11 +808,10 @@ ipcMain.handle('connect-arduino', async () => {
       });
     });
     
-    sendLog(`Serial port ${arduinoPort.path} opened successfully`, 'success');
-    sendLog('Sending handshake to Arduino...', 'info');
+    sendLog(`Serial port opened successfully`, 'success');
     
-    // Send handshake repeatedly until we get response
-    let handshakeAttempts = 0;
+    // Send handshake with retry
+    let attempts = 0;
     const maxAttempts = 10;
     
     const sendHandshake = () => {
@@ -478,26 +825,24 @@ ipcMain.handle('connect-arduino', async () => {
         return;
       }
       
-      handshakeAttempts++;
-      if (handshakeAttempts > maxAttempts) {
-        sendLog('Arduino handshake timeout - device may not be running correct sketch', 'error');
+      attempts++;
+      if (attempts > maxAttempts) {
+        sendLog('Arduino handshake timeout - check if correct sketch is uploaded', 'error');
         if (handshakeInterval) clearInterval(handshakeInterval);
         return;
       }
       
       serialPort.write('HELLO\n', (err) => {
-        if (err) {
-          sendLog(`Error sending handshake: ${err.message}`, 'error');
-        } else {
-          sendLog(`Handshake attempt ${handshakeAttempts}/${maxAttempts}`, 'info');
+        if (!err) {
+          sendLog(`Handshake attempt ${attempts}/${maxAttempts}`, 'info');
         }
       });
     };
     
-    // Send first handshake immediately
-    setTimeout(sendHandshake, 500); // Small delay for Arduino to initialize
+    // Initial handshake after delay
+    setTimeout(sendHandshake, 500);
     
-    // Then repeat every second until connected
+    // Retry every second
     handshakeInterval = setInterval(sendHandshake, 1000);
     
     return { success: true, port: arduinoPort.path };
@@ -518,7 +863,7 @@ ipcMain.handle('test-motor', async () => {
     }
     
     if (!arduinoConnected) {
-      throw new Error('Arduino handshake not confirmed');
+      throw new Error('Arduino not connected');
     }
     
     return new Promise((resolve) => {
@@ -549,12 +894,17 @@ ipcMain.handle('disconnect-arduino', async () => {
   }
   
   if (serialPort && serialPort.isOpen) {
-    serialPort.close();
+    try {
+      serialPort.close();
+      sendLog('Arduino disconnected', 'info');
+    } catch (err) {
+      console.log('Serial port already closed:', err.message);
+    }
     serialPort = null;
     arduinoConnected = false;
-    sendLog('Arduino disconnected', 'info');
     updateStatus();
   }
+  
   return { success: true };
 });
 
@@ -563,15 +913,15 @@ ipcMain.handle('disconnect-arduino', async () => {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  // Clean up connections
-  if (udpServer) udpServer.close();
-  if (serialPort && serialPort.isOpen) serialPort.close();
-  if (unityCheckInterval) clearInterval(unityCheckInterval);
-  if (handshakeInterval) clearInterval(handshakeInterval);
+  cleanupConnections();
   
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', (event) => {
+  cleanupConnections();
 });
 
 app.on('activate', () => {
@@ -580,10 +930,13 @@ app.on('activate', () => {
   }
 });
 
-// Handle app quit
-app.on('before-quit', () => {
-  if (udpServer) udpServer.close();
-  if (serialPort && serialPort.isOpen) serialPort.close();
-  if (unityCheckInterval) clearInterval(unityCheckInterval);
-  if (handshakeInterval) clearInterval(handshakeInterval);
+// Handle app termination signals
+process.on('SIGINT', () => {
+  cleanupConnections();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  cleanupConnections();
+  process.exit(0);
 });
