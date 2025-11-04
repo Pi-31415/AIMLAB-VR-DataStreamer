@@ -1,26 +1,27 @@
 @echo off
 REM ============================================================================
-REM Build Script for AIMLAB-VR Motor Controller (SDL2 + ImGui)
+REM Build Script for AIMLAB VR Data Streamer
 REM Author: Pi Ko (pi.ko@nyu.edu)
 REM Date: 04 November 2025
-REM Version: v5.0
+REM Version: v6.0
 REM
 REM Description:
-REM   Automated build script for compiling the AIMLAB-VR Motor Controller
-REM   using Dear ImGui + SDL2 software renderer (no OpenGL required)
+REM   Automated build script for compiling the AIMLAB VR Data Streamer
+REM   with Unity VR integration, Arduino motor control, and CSV data logging
 REM
 REM Requirements:
 REM   - MinGW-w64 (g++ compiler)
 REM   - SDL2 development libraries (run download_sdl2.ps1 first)
 REM   - Dear ImGui SDL2 backends (run download_imgui_sdl2_backends.ps1 first)
+REM   - Winsock2 (included in Windows)
 REM
 REM Usage:
 REM   .\build.bat
 REM ============================================================================
 
 echo ============================================================
-echo   AIMLAB-VR Motor Controller Build System
-echo   Dear ImGui + SDL2 Software Renderer
+echo   AIMLAB VR Data Streamer Build System
+echo   Unity VR + Arduino + CSV Logging
 echo ============================================================
 echo.
 
@@ -75,9 +76,10 @@ g++ main.cpp ^
     -lSDL2main ^
     -lSDL2 ^
     -lgdi32 ^
+    -lws2_32 ^
     -mwindows ^
     -std=c++17 ^
-    -o main.exe
+    -o AIMLAB_VR_DataStreamer.exe
 
 REM Check compilation result
 if %errorlevel% neq 0 (
@@ -116,21 +118,23 @@ echo ============================================================
 echo [SUCCESS] Build completed successfully!
 echo ============================================================
 echo.
-echo Output: main.exe
+echo Output: AIMLAB_VR_DataStreamer.exe
 echo Size: 
-dir main.exe | findstr "main.exe"
+dir AIMLAB_VR_DataStreamer.exe | findstr "AIMLAB_VR_DataStreamer.exe"
 echo.
 echo Dependencies:
 echo   - SDL2.dll (copied to current directory)
 echo   - Windows GDI32 (system library)
+echo   - Windows Winsock2 (system library)
 echo.
-echo To run: .\main.exe
+echo To run: .\AIMLAB_VR_DataStreamer.exe
 echo.
 echo Features:
-echo   - Dear ImGui modern GUI
-echo   - SDL2 software renderer (no OpenGL)
-echo   - Arduino serial communication
-echo   - Non-blocking UI operations
+echo   - Unity VR headset data streaming
+echo   - Arduino vibration motor control
+echo   - CSV data logging with auto-numbering
+echo   - Auto-discovery on startup
+echo   - NYU purple-themed professional UI
 echo.
 
 REM Offer to run the executable
@@ -138,7 +142,7 @@ set /p RUN="Would you like to run the application now? (y/n): "
 if /i "%RUN%"=="y" (
     echo.
     echo [INFO] Starting application...
-    start main.exe
+    start AIMLAB_VR_DataStreamer.exe
 )
 
 echo.

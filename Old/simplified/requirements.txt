@@ -1,0 +1,17 @@
+# Python Requirements for AIMLAB VR Data Analysis
+# Author: Pi Ko (pi.ko@nyu.edu)
+# Date: 04 November 2025
+# Version: v1.0
+
+# Data manipulation
+pandas>=1.5.0
+
+# Numerical computations
+numpy>=1.23.0
+
+# Visualization
+matplotlib>=3.6.0
+
+# Installation:
+# pip install -r requirements.txt
+
