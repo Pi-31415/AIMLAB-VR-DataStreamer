@@ -3,7 +3,7 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 04 November 2025
- * Version: v2.7
+ * Version: v2.8
  * 
  * Description:
  * Main Electron process for AIMLAB VR Data Collector.
@@ -11,10 +11,15 @@
  * Arduino serial communication, CSV file recording, and application lifecycle.
  * 
  * Changelog:
+ * v2.8 - 04 November 2025 - Experiment control and recording fixes
+ *        - Added Start/Stop Experiment commands to control Unity
+ *        - Fixed ENOTDIR error with proper directory creation
+ *        - Changed batch size to 5 for safer writes
+ *        - Added file rename notification modal
+ *        - Added dialog module for alerts
  * v2.7 - 04 November 2025 - Data port conflict resolution
  *        - Electron now uses port 45102 (not 45101 to avoid Unity conflict)
  *        - Unity sends to 45102, Electron sends to 45101
- *        - Each app has its own data port (no more binding conflicts)
  * v2.6 - 04 November 2025 - setBroadcast timing fix
  *        - Fixed EBADF error by setting broadcast AFTER bind
  *        - Simplified broadcast to target Unity's port 45000 only
@@ -32,7 +37,7 @@
  * v1.0 - 04 November 2025 - Initial implementation
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const dgram = require('dgram');
 const { SerialPort } = require('serialport');
@@ -70,6 +75,11 @@ const MSG_HANDSHAKE = "HANDSHAKE";
 const MSG_READY = "READY";
 const MSG_DATA = "DATA";
 const MSG_KEEPALIVE = "KEEPALIVE";
+const MSG_COMMAND = "CMD";
+
+// Command Constants
+const CMD_START_EXPERIMENT = "START_EXPERIMENT";
+const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
 
 /**
  * Creates the main application window
@@ -377,6 +387,11 @@ ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
         const keepaliveResponse = `${MSG_KEEPALIVE}:${NODE_ID}`;
         dataServer.send(Buffer.from(keepaliveResponse), rinfo.port, rinfo.address);
       }
+      else if (message.startsWith(MSG_COMMAND) || message.startsWith('CMD:')) {
+        // Command response from Unity
+        const cmdResponse = message.substring(4);
+        sendLog(`Unity command response: ${cmdResponse}`, 'info');
+      }
       else {
         // Try parsing as raw CSV data (backwards compatibility)
         handleUnityData(message, rinfo);
@@ -467,10 +482,10 @@ function handleUnityData(data, rinfo) {
     // Remove "DATA:" prefix if present
     let dataString = data;
     if (dataString.startsWith('DATA:')) {
-      // Format: "DATA:type:values" or "DATA:values"
-      const colonIndex = dataString.indexOf(':', 5); // Skip first "DATA:"
-      if (colonIndex > 0) {
-        dataString = dataString.substring(colonIndex + 1); // Get everything after second colon
+      // Format: "DATA:type:values"
+      const parts = dataString.split(':');
+      if (parts.length >= 3) {
+        dataString = parts.slice(2).join(':'); // Get everything after "DATA:type:"
       } else {
         dataString = dataString.substring(5); // Just remove "DATA:"
       }
@@ -489,10 +504,11 @@ function handleUnityData(data, rinfo) {
       if (isRecording && csvWriter) {
         dataBuffer.push(parsedData);
         
-        // Write in batches for performance
-        if (dataBuffer.length >= 10) {
+        // Write in smaller batches (every 5 lines for safety)
+        if (dataBuffer.length >= 5) {
           csvWriter.writeRecords(dataBuffer)
             .then(() => {
+              sendLog(`Saved ${dataBuffer.length} data points`, 'debug');
               dataBuffer = [];
             })
             .catch(err => {
@@ -611,23 +627,50 @@ ipcMain.handle('disconnect-unity', async () => {
  */
 ipcMain.handle('start-recording', async (event, filename) => {
   try {
-    // Create data directory if it doesn't exist
+    // Create data directory properly
     const dataDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir);
+    
+    // Check if 'data' exists and is a file (not directory)
+    try {
+      const stats = fs.statSync(dataDir);
+      if (!stats.isDirectory()) {
+        // It's a file, remove it and create directory
+        fs.unlinkSync(dataDir);
+        fs.mkdirSync(dataDir, { recursive: true });
+        sendLog('Removed data file and created directory', 'info');
+      }
+    } catch (err) {
+      // Doesn't exist, create it
+      fs.mkdirSync(dataDir, { recursive: true });
+      sendLog('Created data directory', 'info');
     }
     
     // Clean filename - remove invalid characters
     let baseFilename = filename.replace(/\.csv$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!baseFilename) {
+      baseFilename = `recording_${Date.now()}`;
+    }
+    
     let finalFilename = baseFilename;
     let counter = 1;
     let filepath = path.join(dataDir, `${finalFilename}.csv`);
     
-    // Find unique filename
+    // Check for existing files and track them
+    const existingFiles = [];
     while (fs.existsSync(filepath)) {
+      existingFiles.push(`${finalFilename}.csv`);
       finalFilename = `${baseFilename}_${counter}`;
       filepath = path.join(dataDir, `${finalFilename}.csv`);
       counter++;
+    }
+    
+    // Notify UI if file was renamed
+    if (existingFiles.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('file-renamed', {
+        original: baseFilename,
+        renamed: finalFilename,
+        existing: existingFiles
+      });
     }
     
     // Create CSV writer
@@ -655,7 +698,9 @@ ipcMain.handle('start-recording', async (event, filename) => {
     dataBuffer = [];
     
     sendLog(`Recording started: ${finalFilename}.csv`, 'success');
-    return { success: true, filename: finalFilename };
+    sendLog(`Saving to: ${filepath}`, 'info');
+    
+    return { success: true, filename: finalFilename, path: filepath };
     
   } catch (error) {
     sendLog(`Failed to start recording: ${error.message}`, 'error');
@@ -880,6 +925,80 @@ ipcMain.handle('test-motor', async () => {
     
   } catch (error) {
     sendLog(`Motor test error: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+// ==================== Unity Experiment Control ====================
+
+/**
+ * Start experiment in Unity
+ */
+ipcMain.handle('start-experiment', async () => {
+  try {
+    if (!unityConnected) {
+      throw new Error('Unity not connected');
+    }
+    
+    if (!unityEndpoint || !dataServer) {
+      throw new Error('Unity endpoint not established');
+    }
+    
+    // Send START_EXPERIMENT command to Unity
+    const commandMsg = `${MSG_COMMAND}:${CMD_START_EXPERIMENT}`;
+    dataServer.send(
+      Buffer.from(commandMsg),
+      UNITY_DATA_PORT,
+      unityEndpoint.address,
+      (err) => {
+        if (err) {
+          sendLog(`Failed to send start command: ${err.message}`, 'error');
+        } else {
+          sendLog('Start Experiment command sent to Unity', 'success');
+        }
+      }
+    );
+    
+    return { success: true };
+    
+  } catch (error) {
+    sendLog(`Failed to start experiment: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Stop experiment in Unity
+ */
+ipcMain.handle('stop-experiment', async () => {
+  try {
+    if (!unityConnected) {
+      throw new Error('Unity not connected');
+    }
+    
+    if (!unityEndpoint || !dataServer) {
+      throw new Error('Unity endpoint not established');
+    }
+    
+    // Send STOP_EXPERIMENT command to Unity
+    const commandMsg = `${MSG_COMMAND}:${CMD_STOP_EXPERIMENT}`;
+    dataServer.send(
+      Buffer.from(commandMsg),
+      UNITY_DATA_PORT,
+      unityEndpoint.address,
+      (err) => {
+        if (err) {
+          sendLog(`Failed to send stop command: ${err.message}`, 'error');
+        } else {
+          sendLog('Stop Experiment command sent to Unity', 'success');
+        }
+      }
+    );
+    
+    return { success: true };
+    
+  } catch (error) {
+    sendLog(`Failed to stop experiment: ${error.message}`, 'error');
     return { success: false, error: error.message };
   }
 });

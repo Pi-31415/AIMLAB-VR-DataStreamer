@@ -45,6 +45,8 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div class="control-group">
                 <h3>Unity Connection</h3>
                 <button id="connectUnity" class="btn-primary">Connect to Unity</button>
+                <button id="startExperiment" class="btn-success" disabled>Start Experiment</button>
+                <button id="stopExperiment" class="btn-danger" disabled>Stop Experiment</button>
                 <button id="refreshUnity" class="btn-secondary">Refresh</button>
             </div>
 
@@ -79,6 +81,15 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
         <div class="data-preview">
             <h3>Live Data Stream</h3>
             <div id="dataStream" class="data-stream">Waiting for data...</div>
+        </div>
+    </div>
+
+    <!-- Modal for file rename notification -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3>File Already Exists</h3>
+            <p id="modalMessage"></p>
+            <button id="modalClose" class="btn-primary">OK</button>
         </div>
     </div>
 

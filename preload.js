@@ -91,6 +91,25 @@ contextBridge.exposeInMainWorld('api', {
    * Listen for log messages
    * @param {Function} callback - Callback function receiving log object
    */
-  onLog: (callback) => ipcRenderer.on('log-message', callback)
+  onLog: (callback) => ipcRenderer.on('log-message', callback),
+  
+  // Experiment Control
+  /**
+   * Start experiment in Unity
+   * @returns {Promise<Object>} Result with success status
+   */
+  startExperiment: () => ipcRenderer.invoke('start-experiment'),
+  
+  /**
+   * Stop experiment in Unity
+   * @returns {Promise<Object>} Result with success status
+   */
+  stopExperiment: () => ipcRenderer.invoke('stop-experiment'),
+  
+  /**
+   * Listen for file rename notifications
+   * @param {Function} callback - Callback function receiving rename data
+   */
+  onFileRenamed: (callback) => ipcRenderer.on('file-renamed', callback)
 });
 

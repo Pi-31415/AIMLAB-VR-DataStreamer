@@ -34,6 +34,8 @@ const elements = {
     // Buttons
     connectUnity: document.getElementById('connectUnity'),
     refreshUnity: document.getElementById('refreshUnity'),
+    startExperiment: document.getElementById('startExperiment'),
+    stopExperiment: document.getElementById('stopExperiment'),
     connectArduino: document.getElementById('connectArduino'),
     testMotor: document.getElementById('testMotor'),
     refreshArduino: document.getElementById('refreshArduino'),
@@ -47,7 +49,12 @@ const elements = {
     // Output areas
     logOutput: document.getElementById('logOutput'),
     dataStream: document.getElementById('dataStream'),
-    recordingStatus: document.getElementById('recordingStatus')
+    recordingStatus: document.getElementById('recordingStatus'),
+    
+    // Modal
+    modal: document.getElementById('modal'),
+    modalMessage: document.getElementById('modalMessage'),
+    modalClose: document.getElementById('modalClose')
 };
 
 // ==================== Initialization ====================
@@ -71,6 +78,8 @@ function setupEventListeners() {
     // Unity Controls
     elements.connectUnity.addEventListener('click', connectToUnity);
     elements.refreshUnity.addEventListener('click', refreshUnityConnection);
+    elements.startExperiment.addEventListener('click', startExperiment);
+    elements.stopExperiment.addEventListener('click', stopExperiment);
     
     // Arduino Controls
     elements.connectArduino.addEventListener('click', connectToArduino);
@@ -83,6 +92,7 @@ function setupEventListeners() {
     
     // Utility
     elements.clearLog.addEventListener('click', clearLog);
+    elements.modalClose.addEventListener('click', closeModal);
     
     // IPC Listeners
     window.api.onStatusUpdate((event, status) => {
@@ -95,6 +105,10 @@ function setupEventListeners() {
     
     window.api.onLog((event, log) => {
         addLog(log.message, log.type);
+    });
+    
+    window.api.onFileRenamed((event, data) => {
+        showFileRenameModal(data);
     });
 }
 
@@ -129,6 +143,39 @@ async function refreshUnityConnection() {
     elements.connectUnity.textContent = 'Connect to Unity';
     updateConnectionStatus({ unity: false, arduino: arduinoConnected });
     setTimeout(() => connectToUnity(), 500);
+}
+
+/**
+ * Start experiment in Unity
+ */
+async function startExperiment() {
+    addLog('Sending Start Experiment command to Unity...', 'info');
+    const result = await window.api.startExperiment();
+    
+    if (result.success) {
+        elements.startExperiment.disabled = true;
+        elements.stopExperiment.disabled = false;
+        addLog('Experiment started in Unity', 'success');
+        addLog('Unity should now be sending VR data', 'info');
+    } else {
+        addLog(`Failed to start experiment: ${result.error}`, 'error');
+    }
+}
+
+/**
+ * Stop experiment in Unity
+ */
+async function stopExperiment() {
+    addLog('Sending Stop Experiment command to Unity...', 'info');
+    const result = await window.api.stopExperiment();
+    
+    if (result.success) {
+        elements.startExperiment.disabled = false;
+        elements.stopExperiment.disabled = true;
+        addLog('Experiment stopped in Unity', 'success');
+    } else {
+        addLog(`Failed to stop experiment: ${result.error}`, 'error');
+    }
 }
 
 // ==================== Arduino Connection Functions ====================
@@ -247,6 +294,8 @@ function updateConnectionStatus(status) {
     elements.arduinoStatus.className = `status-indicator ${status.arduino ? 'connected' : 'disconnected'}`;
     
     // Update button states
+    elements.startExperiment.disabled = !status.unity;
+    elements.stopExperiment.disabled = !status.unity;
     elements.startRecording.disabled = !status.unity || isRecording;
     elements.testMotor.disabled = !status.arduino;
 }
@@ -311,6 +360,24 @@ function addLog(message, type = 'info') {
 function clearLog() {
     elements.logOutput.innerHTML = '';
     addLog('Log cleared', 'info');
+}
+
+/**
+ * Show file rename modal
+ * @param {Object} data - Rename notification data
+ */
+function showFileRenameModal(data) {
+    elements.modalMessage.textContent = 
+        `File "${data.original}.csv" already exists. Saving as "${data.renamed}.csv"`;
+    elements.modal.style.display = 'flex';
+    addLog(`File renamed to ${data.renamed}.csv (original exists)`, 'warning');
+}
+
+/**
+ * Close modal
+ */
+function closeModal() {
+    elements.modal.style.display = 'none';
 }
 
 // ==================== Keyboard Shortcuts ====================
