@@ -15,7 +15,7 @@
  *        - Added check-file-exists handler for pre-validation
  *        - Start Experiment now automatically starts recording
  *        - Stop Experiment now automatically stops recording
- *        - File existence check prevents overwriting data
+ *        - File existence check prevents overwriting dataF
  * v3.2 - 05 November 2025 - Added folder opening functionality
  *        - Added open-data-folder IPC handler to open ExperimentalData folder in Explorer
  *        - Uses shell.openPath for cross-platform folder opening
@@ -517,6 +517,21 @@ function handleUnityData(data, rinfo) {
       } else {
         dataString = dataString.substring(5); // Just remove "DATA:"
       }
+    }
+
+    // Check for vibration command BEFORE parsing as CSV
+    if (data.startsWith('DATA:VIBRATION:')) {
+      const vibrationValue = data.split(':')[2];
+      if (vibrationValue === '1' && serialPort && serialPort.isOpen) {
+        serialPort.write('1\n', (err) => {
+          if (err) {
+            sendLog(`Error sending vibration to Arduino: ${err.message}`, 'error');
+          } else {
+            sendLog('Vibration command sent to Arduino', 'success');
+          }
+        });
+      }
+      return; // Don't process as CSV data
     }
     
     // Parse VR data
