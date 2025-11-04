@@ -2,14 +2,20 @@
  * AIMLAB VR Streamer - Preload Script
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 04 November 2025
- * Version: v2.0
+ * Date: 05 November 2025
+ * Version: v3.3
  * 
  * Description:
  * Preload script for Electron contextBridge to safely expose IPC functionality
  * for Unity UDP data streaming and Arduino serial communication.
  * 
  * Changelog:
+ * v3.3 - 05 November 2025 - Added file existence checking
+ *        - Added checkFileExists function for validation before recording
+ *        - Exposed recording handlers for experiment integration
+ * v3.2 - 05 November 2025 - Added folder opening functionality
+ *        - Added openDataFolder function for direct folder access
+ *        - Retained recording handlers for internal use
  * v2.0 - 04 November 2025 - Major update for VR data collection
  *        - Added Unity UDP connection handlers
  *        - Added Arduino serial communication handlers
@@ -110,6 +116,20 @@ contextBridge.exposeInMainWorld('api', {
    * Listen for file rename notifications
    * @param {Function} callback - Callback function receiving rename data
    */
-  onFileRenamed: (callback) => ipcRenderer.on('file-renamed', callback)
+  onFileRenamed: (callback) => ipcRenderer.on('file-renamed', callback),
+  
+  // Folder Operations
+  /**
+   * Open Experiment Data folder in Windows Explorer
+   * @returns {Promise<Object>} Result with success status and path
+   */
+  openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
+  
+  /**
+   * Check if a file with the given experiment ID already exists
+   * @param {string} experimentId - Experiment ID to check
+   * @returns {Promise<Object>} Result with exists boolean
+   */
+  checkFileExists: (experimentId) => ipcRenderer.invoke('check-file-exists', experimentId)
 });
 

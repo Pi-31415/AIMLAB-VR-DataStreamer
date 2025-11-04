@@ -2,8 +2,8 @@
  * AIMLAB VR Streamer - Main Process
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 04 November 2025
- * Version: v3.1
+ * Date: 05 November 2025
+ * Version: v3.3
  * 
  * Description:
  * Main Electron process for AIMLAB VR Data Collector.
@@ -11,6 +11,15 @@
  * Arduino serial communication, CSV file recording, and application lifecycle.
  * 
  * Changelog:
+ * v3.3 - 05 November 2025 - Integrated recording with experiments
+ *        - Added check-file-exists handler for pre-validation
+ *        - Start Experiment now automatically starts recording
+ *        - Stop Experiment now automatically stops recording
+ *        - File existence check prevents overwriting data
+ * v3.2 - 05 November 2025 - Added folder opening functionality
+ *        - Added open-data-folder IPC handler to open ExperimentalData folder in Explorer
+ *        - Uses shell.openPath for cross-platform folder opening
+ *        - Creates folder if it doesn't exist before opening
  * v3.1 - 04 November 2025 - Force file creation fix
  *        - CSV file now created immediately with headers (not delayed)
  *        - Fixes issue where file wasn't created if no data received
@@ -53,7 +62,7 @@
  * v1.0 - 04 November 2025 - Initial implementation
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const dgram = require('dgram');
 const { SerialPort } = require('serialport');
@@ -1123,6 +1132,72 @@ ipcMain.handle('disconnect-arduino', async () => {
   }
   
   return { success: true };
+});
+
+// ==================== Folder Operations ====================
+
+/**
+ * Open Experiment Data folder in Windows Explorer
+ */
+ipcMain.handle('open-data-folder', async () => {
+  try {
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
+    const dataDir = path.join(appPath, 'ExperimentalData');
+    
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(dataDir)) {
+      try {
+        fs.mkdirSync(dataDir, { recursive: true });
+        sendLog(`Created ExperimentalData folder: ${dataDir}`, 'success');
+      } catch (mkdirErr) {
+        throw new Error(`Cannot create data directory: ${mkdirErr.message}`);
+      }
+    }
+    
+    // Open folder in Windows Explorer (or default file manager on other OS)
+    const openResult = await shell.openPath(dataDir);
+    
+    if (openResult) {
+      // openPath returns empty string on success, error message on failure
+      throw new Error(`Failed to open folder: ${openResult}`);
+    }
+    
+    sendLog(`Opened folder: ${dataDir}`, 'success');
+    return { success: true, path: dataDir };
+    
+  } catch (error) {
+    sendLog(`Failed to open data folder: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Check if file with given experiment ID already exists
+ * @param {string} experimentId - Experiment ID to check
+ */
+ipcMain.handle('check-file-exists', async (event, experimentId) => {
+  try {
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
+    const dataDir = path.join(appPath, 'ExperimentalData');
+    
+    // Clean filename
+    const cleanFilename = experimentId.replace(/\.csv$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filepath = path.join(dataDir, `${cleanFilename}.csv`);
+    
+    const exists = fs.existsSync(filepath);
+    
+    if (exists) {
+      sendLog(`File check: ${cleanFilename}.csv already exists`, 'warning');
+    } else {
+      sendLog(`File check: ${cleanFilename}.csv is available`, 'debug');
+    }
+    
+    return { success: true, exists: exists, filename: cleanFilename };
+    
+  } catch (error) {
+    sendLog(`Error checking file existence: ${error.message}`, 'error');
+    return { success: false, exists: false, error: error.message };
+  }
 });
 
 // ==================== Application Lifecycle ====================

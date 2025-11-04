@@ -2,15 +2,24 @@
  * AIMLAB VR Data Collector - Renderer Process
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 04 November 2025
- * Version: v2.0
+ * Date: 05 November 2025
+ * Version: v3.3
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
  * Handles UI interactions for Unity UDP connection, Arduino serial
- * communication, and CSV recording controls.
+ * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v3.3 - 05 November 2025 - Integrated recording with experiments
+ *        - Added Experiment ID textbox for file naming
+ *        - Start Experiment automatically starts recording
+ *        - Stop Experiment automatically stops recording
+ *        - Added file existence validation before starting
+ * v3.2 - 05 November 2025 - Removed recording buttons
+ *        - Replaced Start/Stop Recording buttons with Open Experiment Data Folder button
+ *        - Removed recording state management
+ *        - Added folder opening functionality
  * v2.0 - 04 November 2025 - Data collection interface
  *        - Unity UDP connection management
  *        - Arduino serial communication
@@ -39,12 +48,11 @@ const elements = {
     connectArduino: document.getElementById('connectArduino'),
     testMotor: document.getElementById('testMotor'),
     refreshArduino: document.getElementById('refreshArduino'),
-    startRecording: document.getElementById('startRecording'),
-    stopRecording: document.getElementById('stopRecording'),
+    openDataFolder: document.getElementById('openDataFolder'),
     clearLog: document.getElementById('clearLog'),
     
     // Inputs
-    filename: document.getElementById('filename'),
+    experimentId: document.getElementById('experimentId'),
     
     // Output areas
     logOutput: document.getElementById('logOutput'),
@@ -85,9 +93,8 @@ function setupEventListeners() {
     elements.testMotor.addEventListener('click', testMotor);
     elements.refreshArduino.addEventListener('click', refreshArduinoConnection);
     
-    // Recording Controls
-    elements.startRecording.addEventListener('click', startRecording);
-    elements.stopRecording.addEventListener('click', stopRecording);
+    // Data Folder
+    elements.openDataFolder.addEventListener('click', openDataFolder);
     
     // Utility
     elements.clearLog.addEventListener('click', clearLog);
@@ -145,35 +152,100 @@ async function refreshUnityConnection() {
 }
 
 /**
- * Start experiment in Unity
+ * Start experiment in Unity and begin recording
  */
 async function startExperiment() {
+    const experimentId = elements.experimentId.value.trim();
+    
+    // Validate Experiment ID
+    if (!experimentId) {
+        addLog('Please enter an Experiment ID', 'error');
+        elements.experimentId.focus();
+        return;
+    }
+    
+    if (!unityConnected) {
+        addLog('Unity must be connected to start experiment', 'error');
+        return;
+    }
+    
+    // Check if file already exists
+    const checkResult = await window.api.checkFileExists(experimentId);
+    if (checkResult.exists) {
+        // Show modal alert
+        showFileExistsModal(experimentId);
+        return;
+    }
+    
+    // Start recording first
+    addLog(`Starting recording with Experiment ID: ${experimentId}...`, 'info');
+    const recordResult = await window.api.startRecording(experimentId);
+    
+    if (!recordResult.success) {
+        addLog(`Failed to start recording: ${recordResult.error}`, 'error');
+        return;
+    }
+    
+    isRecording = true;
+    elements.recordingStatus.textContent = `🔴 Recording: ${recordResult.filename}.csv`;
+    elements.recordingStatus.classList.add('active');
+    addLog(`Recording started: ${recordResult.filename}.csv`, 'success');
+    
+    // Then send Start Experiment command to Unity
     addLog('Sending Start Experiment command to Unity...', 'info');
     const result = await window.api.startExperiment();
     
     if (result.success) {
         elements.startExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
+        elements.experimentId.disabled = true;
         addLog('Experiment started in Unity', 'success');
         addLog('Unity should now be sending VR data', 'info');
     } else {
         addLog(`Failed to start experiment: ${result.error}`, 'error');
+        // Stop recording if experiment failed to start
+        await stopRecordingOnly();
     }
 }
 
 /**
- * Stop experiment in Unity
+ * Stop experiment in Unity and stop recording
  */
 async function stopExperiment() {
+    // Send Stop Experiment command to Unity first
     addLog('Sending Stop Experiment command to Unity...', 'info');
     const result = await window.api.stopExperiment();
     
     if (result.success) {
-        elements.startExperiment.disabled = false;
-        elements.stopExperiment.disabled = true;
         addLog('Experiment stopped in Unity', 'success');
     } else {
         addLog(`Failed to stop experiment: ${result.error}`, 'error');
+    }
+    
+    // Stop recording regardless of Unity result
+    await stopRecordingOnly();
+    
+    elements.startExperiment.disabled = false;
+    elements.stopExperiment.disabled = true;
+    elements.experimentId.disabled = false;
+}
+
+/**
+ * Internal function to stop recording without UI side effects
+ */
+async function stopRecordingOnly() {
+    if (!isRecording) return;
+    
+    const result = await window.api.stopRecording();
+    
+    if (result.success) {
+        isRecording = false;
+        elements.recordingStatus.textContent = '';
+        elements.recordingStatus.classList.remove('active');
+        addLog(`Recording saved: ${result.filename}.csv`, 'success');
+        addLog(`File location: ExperimentalData/${result.filename}.csv`, 'info');
+    } else {
+        addLog(`Failed to stop recording: ${result.error}`, 'error');
     }
 }
 
@@ -224,65 +296,19 @@ async function refreshArduinoConnection() {
     setTimeout(() => connectToArduino(), 500);
 }
 
-// ==================== Recording Functions ====================
+// ==================== Data Folder Functions ====================
 
 /**
- * Start CSV recording
+ * Open Experiment Data Folder in Windows Explorer
  */
-async function startRecording() {
-    const filename = elements.filename.value.trim();
-    
-    if (!filename) {
-        addLog('Please enter a filename', 'error');
-        elements.filename.focus();
-        return;
-    }
-    
-    if (!unityConnected) {
-        addLog('Unity must be connected to start recording', 'error');
-        return;
-    }
-    
-    const result = await window.api.startRecording(filename);
+async function openDataFolder() {
+    addLog('Opening Experiment Data folder...', 'info');
+    const result = await window.api.openDataFolder();
     
     if (result.success) {
-        isRecording = true;
-        elements.startRecording.disabled = true;
-        elements.stopRecording.disabled = false;
-        elements.filename.disabled = true;
-        elements.recordingStatus.textContent = `🔴 Recording to ${result.filename}.csv`;
-        elements.recordingStatus.classList.add('active');
-        addLog(`Recording started: ${result.filename}.csv`, 'success');
+        addLog(`Opened folder: ${result.path}`, 'success');
     } else {
-        addLog(`Failed to start recording: ${result.error}`, 'error');
-    }
-}
-
-/**
- * Stop CSV recording
- */
-async function stopRecording() {
-    const result = await window.api.stopRecording();
-    
-    if (result.success) {
-        isRecording = false;
-        elements.startRecording.disabled = false;
-        elements.stopRecording.disabled = true;
-        elements.filename.disabled = false;
-        elements.recordingStatus.textContent = '';
-        elements.recordingStatus.classList.remove('active');
-        addLog(`Recording saved: ${result.filename}.csv`, 'success');
-        
-        // --- ADD THIS LINE ---
-        // Log the full path returned from the main process
-        if (result.path) {
-            addLog(`File saved in: ${result.path}`, 'info');
-        } else {
-            addLog(`File location: ExperimentalData/${result.filename}.csv`, 'info');
-        }
-        // --- END ADDITION ---
-    } else {
-        addLog(`Failed to stop recording: ${result.error}`, 'error');
+        addLog(`Failed to open folder: ${result.error}`, 'error');
     }
 }
 
@@ -303,7 +329,6 @@ function updateConnectionStatus(status) {
     // Update button states
     elements.startExperiment.disabled = !status.unity;
     elements.stopExperiment.disabled = !status.unity;
-    elements.startRecording.disabled = !status.unity || isRecording;
     elements.testMotor.disabled = !status.arduino;
 }
 
@@ -369,6 +394,17 @@ function showFileRenameModal(data) {
 }
 
 /**
+ * Show file exists modal alert
+ * @param {string} experimentId - The experiment ID that already exists
+ */
+function showFileExistsModal(experimentId) {
+    elements.modalMessage.textContent = 
+        `A file with Experiment ID "${experimentId}.csv" already exists. Please use a different Experiment ID.`;
+    elements.modal.style.display = 'flex';
+    addLog(`Cannot start: File ${experimentId}.csv already exists`, 'error');
+}
+
+/**
  * Close modal
  */
 function closeModal() {
@@ -381,14 +417,10 @@ function closeModal() {
  * Handle keyboard shortcuts
  */
 document.addEventListener('keydown', (event) => {
-    // Ctrl+R or Cmd+R - Start/Stop Recording
-    if ((event.ctrlKey || event.metaKey) && event.key === 'r') {
+    // Ctrl+O or Cmd+O - Open Data Folder
+    if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
         event.preventDefault();
-        if (!isRecording && unityConnected && elements.filename.value.trim()) {
-            startRecording();
-        } else if (isRecording) {
-            stopRecording();
-        }
+        openDataFolder();
     }
     
     // Ctrl+L or Cmd+L - Clear Log

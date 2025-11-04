@@ -3,13 +3,21 @@
 AIMLAB VR Data Collector - User Interface
 
 Author: Pi Ko (pi.ko@nyu.edu)
-Date: 04 November 2025
-Version: v2.0
+Date: 05 November 2025
+Version: v3.3
 
 Description:
 Minimal UI for VR data collection from Unity and Arduino motor control.
 
 Changelog:
+v3.3 - 05 November 2025 - Integrated recording with Start/Stop Experiment
+       - Added Experiment ID textbox for file naming
+       - Start Experiment now automatically starts CSV recording
+       - Stop Experiment now automatically stops CSV recording
+       - File existence validation with modal alert
+v3.2 - 05 November 2025 - Removed recording buttons
+       - Replaced Start/Stop Recording buttons with Open Experiment Data Folder button
+       - Simplified UI for direct folder access
 v2.0 - 04 November 2025 - Minimal data collection interface
        - Redesigned for Unity UDP and Arduino serial
        - Added debug console
@@ -41,7 +49,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
         
         <!-- Version Info -->
         <div class="version-info">
-            Version 3.1.0 | Ports: Unity 45000/45101, Electron 45001/45102
+            Version 3.3.0 | Ports: Unity 45000/45101, Electron 45001/45102
         </div>
 
         <!-- Control Panel -->
@@ -50,18 +58,17 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div class="control-group">
                 <h3>Unity Connection</h3>
                 <button id="connectUnity" class="btn-primary">Connect to Unity</button>
+                <input type="text" id="experimentId" placeholder="Enter Experiment ID (required)" />
                 <button id="startExperiment" class="btn-success" disabled>Start Experiment</button>
                 <button id="stopExperiment" class="btn-danger" disabled>Stop Experiment</button>
                 <button id="refreshUnity" class="btn-secondary">Refresh</button>
+                <div class="recording-status" id="recordingStatus"></div>
             </div>
 
-            <!-- Recording Controls -->
+            <!-- Experiment Data Folder -->
             <div class="control-group">
-                <h3>Data Recording</h3>
-                <input type="text" id="filename" placeholder="Enter filename (without .csv)" />
-                <button id="startRecording" class="btn-primary" disabled>Start Recording</button>
-                <button id="stopRecording" class="btn-secondary" disabled>Stop Recording</button>
-                <div class="recording-status" id="recordingStatus"></div>
+                <h3>Experiment Data</h3>
+                <button id="openDataFolder" class="btn-primary">Open Experiment Data Folder</button>
             </div>
 
             <!-- Vibration Motor Controls -->
