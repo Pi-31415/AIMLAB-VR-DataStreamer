@@ -1,73 +1,41 @@
-# Build directories
-build/
-bin/
-lib/
-*.exe
-*.dll
-*.so
-*.dylib
-*.a
+# Node modules
+node_modules/
 
-# IDE files
-.vscode/
-.vs/
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-*.vcxproj.filters
-*.vcxproj.user
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-*.cmake
-
-# Log files
-*.log
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
+# Electron build outputs
+dist/
+out/
 
 # OS files
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Temporary files
-*~
+# IDE files
+.vscode/
+.idea/
 *.swp
 *.swo
-*.tmp
+*~
 
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
+# Environment variables
+.env
+.env.local
 
+# Package manager lock files (keep package-lock.json but ignore yarn)
+yarn.lock
+
+# Application specific
+imgui.ini
+
+# Electron builder cache
+.cache/
+
+# Build resources (keep build/ directory for icons)
+# build/ is intentionally NOT ignored as it contains icon resources

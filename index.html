@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<!--
+AIMLAB VR Data Collector - User Interface
+
+Author: Pi Ko (pi.ko@nyu.edu)
+Date: 04 November 2025
+Version: v2.0
+
+Description:
+Minimal UI for VR data collection from Unity and Arduino motor control.
+
+Changelog:
+v2.0 - 04 November 2025 - Minimal data collection interface
+       - Redesigned for Unity UDP and Arduino serial
+       - Added debug console
+       - Added live data stream preview
+v1.0 - 04 November 2025 - Initial NYU purple themed UI
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <title>AIMLAB VR Data Collector</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>AIMLAB VR Data Collector</h1>
+            <div class="status-bar">
+                <span class="status-item">
+                    Unity: <span id="unityStatus" class="status-indicator disconnected">●</span>
+                </span>
+                <span class="status-item">
+                    Arduino: <span id="arduinoStatus" class="status-indicator disconnected">●</span>
+                </span>
+            </div>
+        </header>
+
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <!-- Unity Controls -->
+            <div class="control-group">
+                <h3>Unity Connection</h3>
+                <button id="connectUnity" class="btn-primary">Connect to Unity</button>
+                <button id="refreshUnity" class="btn-secondary">Refresh</button>
+            </div>
+
+            <!-- Recording Controls -->
+            <div class="control-group">
+                <h3>Data Recording</h3>
+                <input type="text" id="filename" placeholder="Enter filename (without .csv)" />
+                <button id="startRecording" class="btn-primary" disabled>Start Recording</button>
+                <button id="stopRecording" class="btn-secondary" disabled>Stop Recording</button>
+                <div class="recording-status" id="recordingStatus"></div>
+            </div>
+
+            <!-- Arduino Controls -->
+            <div class="control-group">
+                <h3>Vibration Motor</h3>
+                <button id="connectArduino" class="btn-primary">Connect Arduino</button>
+                <button id="testMotor" class="btn-secondary" disabled>Test Motor (1)</button>
+                <button id="refreshArduino" class="btn-secondary">Refresh</button>
+            </div>
+        </div>
+
+        <!-- Debug Console -->
+        <div class="debug-console">
+            <div class="console-header">
+                <h3>Debug Output</h3>
+                <button id="clearLog" class="btn-small">Clear</button>
+            </div>
+            <div id="logOutput" class="log-output"></div>
+        </div>
+
+        <!-- Data Preview -->
+        <div class="data-preview">
+            <h3>Live Data Stream</h3>
+            <div id="dataStream" class="data-stream">Waiting for data...</div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

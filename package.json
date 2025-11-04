@@ -1,0 +1,84 @@
+{
+  "name": "aimlab-vr-streamer",
+  "version": "2.1.0",
+  "description": "AIMLAB VR Data Collector - Unity UDP & Arduino Serial Communication",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "build": "electron-builder --win --x64",
+    "build:dir": "electron-builder --win --x64 --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "AIMLAB",
+    "VR",
+    "Data Streamer",
+    "Unity",
+    "NYU",
+    "Electron",
+    "Desktop"
+  ],
+  "author": {
+    "name": "Pi Ko",
+    "email": "pi.ko@nyu.edu"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nyu/aimlab-vr-datastreamer"
+  },
+  "build": {
+    "appId": "edu.nyu.aimlab.vrdatacollector",
+    "productName": "AIMLAB VR Data Collector",
+    "copyright": "Copyright © 2025 Pi Ko, NYU",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AIMLAB VR Data Collector"
+    },
+    "portable": {
+      "artifactName": "AIMLAB-VR-DataCollector-Portable.exe"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    }
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "csv-writer": "^1.6.0",
+    "serialport": "^13.0.0"
+  }
+}
