@@ -1,12 +1,19 @@
 /**
- * @file aimlab_vr_datastreamer_simple.cpp
- * @brief AIMLAB-VR-Data Streamer - C++ Node (Simplified Version)
+ * @file aimlab_vr_datastreamer.cpp
+ * @brief AIMLAB-VR-Data Streamer - C++ Node
  * @author Pi Ko (pi.ko@nyu.edu)
- * @date 2025
+ * @date 02 November 2025
+ * @version v2.0
  * 
- * Simplified version with better cross-platform compatibility
+ * C++ application that receives data from Unity VR application via UDP,
+ * handles file operations, and logs received data to files.
+ * Features auto-discovery, command processing, and real-time data streaming.
  * 
- * Compilation: g++ -o aimlab_streamer.exe aimlab_vr_datastreamer_simple.cpp -lws2_32 -std=c++11
+ * Changelog:
+ * - v2.0 (02 November 2025): Made fixed version the default, proper Windows headers
+ * - v1.0 (2025): Initial release
+ * 
+ * Compilation: g++ -o aimlab_streamer.exe aimlab_vr_datastreamer.cpp -lws2_32 -std=c++11
  * Usage: ./aimlab_streamer.exe
  */
 
@@ -29,6 +36,7 @@
     #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <direct.h>
     #pragma comment(lib, "ws2_32.lib")
     typedef int socklen_t;
 #else
@@ -36,6 +44,7 @@
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <unistd.h>
+    #include <sys/stat.h>
     #define SOCKET int
     #define INVALID_SOCKET -1
     #define SOCKET_ERROR -1
@@ -43,12 +52,12 @@
 #endif
 
 // Configuration constants
-const int DISCOVERY_BASE_PORT = 45000;
-const int DATA_PORT = 45100;
-const int BUFFER_SIZE = 4096;
-const std::string NODE_ID = "AIMLAB_CPP";
-const std::string PEER_ID = "AIMLAB_UNITY";
-const std::string DATA_DIR = "aimlab_data";
+const int DISCOVERY_BASE_PORT = 45000;     // Base port for discovery
+const int DATA_PORT = 45100;               // Port for data communication
+const int BUFFER_SIZE = 4096;              // Message buffer size
+const std::string NODE_ID = "AIMLAB_CPP";  // C++ node identifier
+const std::string PEER_ID = "AIMLAB_UNITY"; // Unity node identifier
+const std::string DATA_DIR = "aimlab_data"; // Directory for data files
 
 // Protocol message types
 const std::string MSG_DISCOVER = "DISCOVER";
@@ -66,7 +75,7 @@ const std::string CMD_CLOSE_FILE = "CLOSE_FILE";
 const std::string CMD_STATUS = "GET_STATUS";
 const std::string CMD_SHUTDOWN = "SHUTDOWN";
 
-// Global state
+// Global state management
 std::atomic<bool> peer_discovered(false);
 std::atomic<bool> handshake_complete(false);
 std::atomic<bool> running(true);
@@ -85,12 +94,14 @@ std::string current_filename;
 std::mutex file_mutex;
 std::mutex console_mutex;
 
-// Message queue
+// Message queue for thread-safe logging
 std::queue<std::string> message_queue;
 std::mutex queue_mutex;
 
 /**
  * @brief Log message with timestamp
+ * @param level Log level (INFO, WARNING, ERROR, DATA)
+ * @param message Message to log
  */
 void logMessage(const std::string& level, const std::string& message) {
     std::lock_guard<std::mutex> lock(console_mutex);
@@ -109,7 +120,8 @@ void logMessage(const std::string& level, const std::string& message) {
 }
 
 /**
- * @brief Initialize Winsock (Windows only)
+ * @brief Initialize Windows Socket API (Windows only)
+ * @return true if successful, false otherwise
  */
 bool initializeWinsock() {
 #ifdef _WIN32
@@ -124,7 +136,7 @@ bool initializeWinsock() {
 }
 
 /**
- * @brief Cleanup Winsock
+ * @brief Cleanup Windows Socket API (Windows only)
  */
 void cleanupWinsock() {
 #ifdef _WIN32
@@ -133,19 +145,31 @@ void cleanupWinsock() {
 }
 
 /**
- * @brief Create data directory - simplified version
+ * @brief Create data directory if it doesn't exist
  */
 void createDataDirectory() {
-    // Try to create directory - if it exists, this will fail silently
 #ifdef _WIN32
-    CreateDirectoryA(DATA_DIR.c_str(), NULL);
+    // Windows-specific directory check and creation
+    DWORD attrib = GetFileAttributesA(DATA_DIR.c_str());
+    if (attrib == INVALID_FILE_ATTRIBUTES || !(attrib & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (_mkdir(DATA_DIR.c_str()) == 0) {
+            logMessage("INFO", "Created data directory: " + DATA_DIR);
+        }
+    }
 #else
-    system(("mkdir -p " + DATA_DIR).c_str());
+    // Linux/Unix directory check and creation
+    struct stat info;
+    if (stat(DATA_DIR.c_str(), &info) != 0) {
+        if (mkdir(DATA_DIR.c_str(), 0777) == 0) {
+            logMessage("INFO", "Created data directory: " + DATA_DIR);
+        }
+    }
 #endif
 }
 
 /**
- * @brief Generate automatic filename
+ * @brief Generate automatic filename with timestamp
+ * @return Generated filename
  */
 std::string generateFilename() {
     auto now = std::chrono::system_clock::now();
@@ -166,7 +190,9 @@ std::string generateFilename() {
 }
 
 /**
- * @brief Open a new data file
+ * @brief Open a new data file for writing
+ * @param filename Optional filename, auto-generates if empty
+ * @return true if successful, false otherwise
  */
 bool openDataFile(const std::string& filename = "") {
     std::lock_guard<std::mutex> lock(file_mutex);
@@ -186,6 +212,7 @@ bool openDataFile(const std::string& filename = "") {
         return false;
     }
     
+    // Write CSV header
     current_file << "Timestamp,Type,Data" << std::endl;
     
     file_open = true;
@@ -215,7 +242,9 @@ void closeDataFile() {
 }
 
 /**
- * @brief Write data to file
+ * @brief Write data to the current file
+ * @param type Data type/category
+ * @param data Data content
  */
 void writeData(const std::string& type, const std::string& data) {
     std::lock_guard<std::mutex> lock(file_mutex);
@@ -230,7 +259,7 @@ void writeData(const std::string& type, const std::string& data) {
         now.time_since_epoch()).count();
     
     current_file << ms << "," << type << "," << data << std::endl;
-    current_file.flush();
+    current_file.flush();  // Ensure data is written immediately
     
     data_count++;
     
@@ -241,7 +270,7 @@ void writeData(const std::string& type, const std::string& data) {
 }
 
 /**
- * @brief Enable broadcast on socket
+ * @brief Enable broadcast capability on a socket
  */
 bool enableBroadcast(SOCKET sock) {
     int broadcast_enable = 1;
@@ -250,7 +279,7 @@ bool enableBroadcast(SOCKET sock) {
 }
 
 /**
- * @brief Set socket non-blocking
+ * @brief Set socket to non-blocking mode
  */
 bool setNonBlocking(SOCKET sock) {
 #ifdef _WIN32
@@ -263,7 +292,7 @@ bool setNonBlocking(SOCKET sock) {
 }
 
 /**
- * @brief Try to bind discovery port
+ * @brief Try to bind to a discovery port
  */
 int tryBindDiscoveryPort(SOCKET sock) {
     sockaddr_in local_addr;
@@ -285,7 +314,7 @@ int tryBindDiscoveryPort(SOCKET sock) {
 }
 
 /**
- * @brief Discovery thread
+ * @brief Discovery thread - broadcasts presence and listens for Unity peer
  */
 void discoveryThread() {
     SOCKET send_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -411,7 +440,9 @@ void discoveryThread() {
 }
 
 /**
- * @brief Process command
+ * @brief Process received command
+ * @param command Command string
+ * @return Response string
  */
 std::string processCommand(const std::string& command) {
     std::istringstream iss(command);
@@ -453,7 +484,7 @@ std::string processCommand(const std::string& command) {
 }
 
 /**
- * @brief Data receive thread
+ * @brief Data receive thread - handles incoming data and commands
  */
 void dataReceiveThread(SOCKET sock) {
     char buffer[BUFFER_SIZE];
@@ -475,6 +506,7 @@ void dataReceiveThread(SOCKET sock) {
             buffer[recv_len] = '\0';
             std::string received(buffer);
             
+            // Parse message type
             std::istringstream iss(received);
             std::string msg_type;
             std::getline(iss, msg_type, ':');
@@ -490,21 +522,25 @@ void dataReceiveThread(SOCKET sock) {
             else if (msg_type == MSG_DATA) {
                 std::string data_content = received.substr(MSG_DATA.length() + 1);
                 
+                // Parse data type and content
                 std::istringstream data_iss(data_content);
                 std::string data_type, data_value;
                 std::getline(data_iss, data_type, ':');
                 std::getline(data_iss, data_value);
                 
+                // Write to file if open
                 if (file_open) {
                     writeData(data_type, data_value);
                 }
                 
+                // Log every 10th data message to console
                 static int console_log_count = 0;
                 if (++console_log_count % 10 == 0) {
                     logMessage("DATA", "Received: " + data_type + " = " + data_value);
                 }
             }
             else if (msg_type == MSG_KEEPALIVE) {
+                // Respond to keepalive
                 std::string response = MSG_KEEPALIVE + ":" + NODE_ID;
                 sendto(sock, response.c_str(), response.length(), 0,
                        (sockaddr*)&peer_addr, sizeof(peer_addr));
@@ -516,7 +552,7 @@ void dataReceiveThread(SOCKET sock) {
 }
 
 /**
- * @brief Perform handshake
+ * @brief Perform handshake with Unity peer
  */
 bool performHandshake(SOCKET sock) {
     logMessage("HANDSHAKE", "Initiating handshake protocol...");
@@ -579,19 +615,20 @@ bool performHandshake(SOCKET sock) {
 }
 
 /**
- * @brief Display banner
+ * @brief Display application banner
  */
 void displayBanner() {
     std::cout << "\n";
     std::cout << "=========================================\n";
     std::cout << "   AIMLAB-VR-Data Streamer (C++ Node)   \n";
     std::cout << "   Author: Pi Ko (pi.ko@nyu.edu)        \n";
-    std::cout << "   Version: 1.0 (Simplified)            \n";
+    std::cout << "   Version: v2.0                         \n";
+    std::cout << "   Date: 02 November 2025                \n";
     std::cout << "=========================================\n\n";
 }
 
 /**
- * @brief Display status
+ * @brief Display status information
  */
 void displayStatus() {
     std::cout << "\n--- Current Status ---\n";
@@ -606,7 +643,7 @@ void displayStatus() {
 }
 
 /**
- * @brief Console thread
+ * @brief Console command thread for local control
  */
 void consoleThread() {
     std::string input;
@@ -648,16 +685,20 @@ void consoleThread() {
 int main() {
     displayBanner();
     
+    // Initialize Winsock
     if (!initializeWinsock()) {
         return 1;
     }
     
+    // Create data directory
     createDataDirectory();
     
+    // Start discovery thread
     std::thread discovery(discoveryThread);
     
     logMessage("INFO", "Waiting for Unity connection...");
     
+    // Wait for peer discovery
     while (!peer_discovered && running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -669,8 +710,10 @@ int main() {
         return 1;
     }
     
+    // Wait for peer to be ready
     std::this_thread::sleep_for(std::chrono::seconds(1));
     
+    // Create data socket
     SOCKET data_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (data_sock == INVALID_SOCKET) {
         logMessage("ERROR", "Failed to create data socket");
@@ -701,6 +744,7 @@ int main() {
         return 1;
     }
     
+    // Perform handshake
     if (!performHandshake(data_sock)) {
         logMessage("ERROR", "Handshake failed");
         closesocket(data_sock);
@@ -715,9 +759,11 @@ int main() {
     logMessage("INFO", "AIMLAB-VR Data Streamer ready!");
     logMessage("INFO", "Type 'help' for available commands");
     
+    // Start threads
     std::thread data_receiver(dataReceiveThread, data_sock);
     std::thread console(consoleThread);
     
+    // Keep alive loop
     sockaddr_in peer_addr;
     memset(&peer_addr, 0, sizeof(peer_addr));
     peer_addr.sin_family = AF_INET;
@@ -738,6 +784,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
+    // Cleanup
     if (file_open) {
         closeDataFile();
     }

@@ -1,16 +1,15 @@
 /**
- * @file AIMLABVRDataStreamer.cs
- * @brief AIMLAB-VR-Data Streamer - Unity Component (Modern Version)
+ * @file AIMLABVRDataStreamer_Legacy.cs
+ * @brief AIMLAB-VR-Data Streamer - Unity Component (Legacy Version)
  * @author Pi Ko (pi.ko@nyu.edu)
- * @date 2025
+ * @date 02 November 2025
+ * @version v1.0 (Legacy)
  * 
  * Unity C# component that communicates with the C++ data streamer via UDP.
- * Uses TextMeshPro for UI and Unity's new Input System for VR input.
+ * Handles auto-discovery, command sending, and real-time data transmission.
  * 
- * Requirements:
- * - TextMeshPro package
- * - Input System package
- * - XR Plugin Management (for VR)
+ * Note: This is the legacy version. For new projects, use AIMLABVRDataStreamer.cs (v2.0)
+ *       which includes TextMeshPro and modern Input System support.
  * 
  * Usage: Attach this script to a GameObject in your Unity scene.
  */
@@ -24,14 +23,11 @@ using System.Text;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;  // TextMeshPro
-using UnityEngine.InputSystem;  // New Input System
-using UnityEngine.XR;  // XR support
 
 namespace AIMLAB.VR
 {
     /// <summary>
-    /// Main data streamer component for Unity VR applications (Modern Version)
+    /// Main data streamer component for Unity VR applications
     /// </summary>
     public class AIMLABVRDataStreamer : MonoBehaviour
     {
@@ -81,38 +77,16 @@ namespace AIMLAB.VR
         [Tooltip("Data send interval (seconds)")]
         public float dataSendInterval = 0.1f;
         
-        [Header("UI References - TextMeshPro")]
-        public TextMeshProUGUI statusText;
-        public TMP_InputField filenameInput;
+        [Header("UI References (Optional)")]
+        public Text statusText;
+        public InputField filenameInput;
         public Button openFileButton;
         public Button closeFileButton;
-        public TextMeshProUGUI dataCountText;
+        public Text dataCountText;
         public Toggle autoDataToggle;
-        public TextMeshProUGUI connectionInfoText;
-        
-        [Header("Input System Actions")]
-        [Tooltip("Input action for opening file (e.g., button press)")]
-        public InputActionReference openFileAction;
-        
-        [Tooltip("Input action for closing file")]
-        public InputActionReference closeFileAction;
-        
-        [Tooltip("Input action for toggling data recording")]
-        public InputActionReference toggleRecordingAction;
-        
-        [Header("XR Controller References")]
-        [Tooltip("Track left controller")]
-        public bool trackLeftController = true;
-        
-        [Tooltip("Track right controller")]
-        public bool trackRightController = true;
-        
-        [Tooltip("Track HMD/Headset")]
-        public bool trackHeadset = true;
         
         [Header("Debug")]
         public bool debugMode = false;
-        public TextMeshProUGUI debugText;
         
         #endregion
         
@@ -148,18 +122,12 @@ namespace AIMLAB.VR
         private float lastKeepalive = 0;
         private float keepaliveInterval = 5.0f;
         
-        // XR Devices
-        private List<InputDevice> xrDevices = new List<InputDevice>();
-        
         #endregion
         
         #region Unity Lifecycle
         
         void Awake()
         {
-            // Setup input actions if assigned
-            SetupInputActions();
-            
             if (autoConnect)
             {
                 StartConnection();
@@ -170,14 +138,6 @@ namespace AIMLAB.VR
         {
             SetupUI();
             InvokeRepeating(nameof(UpdateStatus), 0.5f, 0.5f);
-            
-            // Initialize XR device tracking
-            if (trackHeadset || trackLeftController || trackRightController)
-            {
-                InputDevices.deviceConnected += OnDeviceConnected;
-                InputDevices.deviceDisconnected += OnDeviceDisconnected;
-                RefreshXRDevices();
-            }
         }
         
         void Update()
@@ -208,15 +168,6 @@ namespace AIMLAB.VR
         void OnDestroy()
         {
             StopConnection();
-            
-            // Cleanup input actions
-            if (openFileAction != null) openFileAction.action.performed -= OnOpenFileAction;
-            if (closeFileAction != null) closeFileAction.action.performed -= OnCloseFileAction;
-            if (toggleRecordingAction != null) toggleRecordingAction.action.performed -= OnToggleRecordingAction;
-            
-            // Cleanup XR
-            InputDevices.deviceConnected -= OnDeviceConnected;
-            InputDevices.deviceDisconnected -= OnDeviceDisconnected;
         }
         
         void OnApplicationPause(bool pauseStatus)
@@ -233,167 +184,6 @@ namespace AIMLAB.VR
         void OnApplicationQuit()
         {
             StopConnection();
-        }
-        
-        #endregion
-        
-        #region Input System Setup
-        
-        private void SetupInputActions()
-        {
-            // Enable and subscribe to input actions
-            if (openFileAction != null)
-            {
-                openFileAction.action.Enable();
-                openFileAction.action.performed += OnOpenFileAction;
-            }
-            
-            if (closeFileAction != null)
-            {
-                closeFileAction.action.Enable();
-                closeFileAction.action.performed += OnCloseFileAction;
-            }
-            
-            if (toggleRecordingAction != null)
-            {
-                toggleRecordingAction.action.Enable();
-                toggleRecordingAction.action.performed += OnToggleRecordingAction;
-            }
-        }
-        
-        private void OnOpenFileAction(InputAction.CallbackContext context)
-        {
-            if (isConnected && !fileOpen)
-            {
-                string filename = filenameInput != null ? filenameInput.text : "";
-                OpenFile(filename);
-            }
-        }
-        
-        private void OnCloseFileAction(InputAction.CallbackContext context)
-        {
-            if (isConnected && fileOpen)
-            {
-                CloseFile();
-            }
-        }
-        
-        private void OnToggleRecordingAction(InputAction.CallbackContext context)
-        {
-            if (isConnected)
-            {
-                if (fileOpen)
-                {
-                    CloseFile();
-                }
-                else
-                {
-                    OpenFile();
-                }
-            }
-        }
-        
-        #endregion
-        
-        #region XR Device Tracking
-        
-        private void RefreshXRDevices()
-        {
-            xrDevices.Clear();
-            InputDevices.GetDevices(xrDevices);
-            
-            foreach (var device in xrDevices)
-            {
-                LogMessage($"XR Device found: {device.name} ({device.characteristics})", LogLevel.Debug);
-            }
-        }
-        
-        private void OnDeviceConnected(InputDevice device)
-        {
-            RefreshXRDevices();
-            LogMessage($"XR Device connected: {device.name}", LogLevel.Info);
-        }
-        
-        private void OnDeviceDisconnected(InputDevice device)
-        {
-            RefreshXRDevices();
-            LogMessage($"XR Device disconnected: {device.name}", LogLevel.Info);
-        }
-        
-        private void SendXRDeviceData()
-        {
-            foreach (var device in xrDevices)
-            {
-                // Check device type
-                bool isHMD = device.characteristics.HasFlag(InputDeviceCharacteristics.HeadMounted);
-                bool isLeftController = device.characteristics.HasFlag(InputDeviceCharacteristics.Left) &&
-                                       device.characteristics.HasFlag(InputDeviceCharacteristics.Controller);
-                bool isRightController = device.characteristics.HasFlag(InputDeviceCharacteristics.Right) &&
-                                        device.characteristics.HasFlag(InputDeviceCharacteristics.Controller);
-                
-                // Skip if not tracking this device type
-                if (isHMD && !trackHeadset) continue;
-                if (isLeftController && !trackLeftController) continue;
-                if (isRightController && !trackRightController) continue;
-                
-                // Get device name for labeling
-                string deviceLabel = isHMD ? "HMD" : 
-                                    isLeftController ? "LeftController" : 
-                                    isRightController ? "RightController" : 
-                                    device.name.Replace(" ", "_");
-                
-                // Send position if available
-                if (device.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 position))
-                {
-                    SendVector3($"{deviceLabel}_Position", position);
-                }
-                
-                // Send rotation if available
-                if (device.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rotation))
-                {
-                    SendQuaternion($"{deviceLabel}_Rotation", rotation);
-                }
-                
-                // Send velocity if available
-                if (device.TryGetFeatureValue(CommonUsages.deviceVelocity, out Vector3 velocity))
-                {
-                    SendVector3($"{deviceLabel}_Velocity", velocity);
-                }
-                
-                // Send button states for controllers
-                if (isLeftController || isRightController)
-                {
-                    // Trigger
-                    if (device.TryGetFeatureValue(CommonUsages.trigger, out float triggerValue))
-                    {
-                        SendData($"{deviceLabel}_Trigger", triggerValue.ToString("F3"));
-                    }
-                    
-                    // Grip
-                    if (device.TryGetFeatureValue(CommonUsages.grip, out float gripValue))
-                    {
-                        SendData($"{deviceLabel}_Grip", gripValue.ToString("F3"));
-                    }
-                    
-                    // Primary button (A/X)
-                    if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool primaryButton))
-                    {
-                        SendData($"{deviceLabel}_PrimaryButton", primaryButton.ToString());
-                    }
-                    
-                    // Secondary button (B/Y)
-                    if (device.TryGetFeatureValue(CommonUsages.secondaryButton, out bool secondaryButton))
-                    {
-                        SendData($"{deviceLabel}_SecondaryButton", secondaryButton.ToString());
-                    }
-                    
-                    // Thumbstick
-                    if (device.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 thumbstick))
-                    {
-                        SendData($"{deviceLabel}_Thumbstick", $"{thumbstick.x:F3},{thumbstick.y:F3}");
-                    }
-                }
-            }
         }
         
         #endregion
@@ -517,15 +307,6 @@ namespace AIMLAB.VR
         public void SendVector3(string label, Vector3 vector)
         {
             string data = $"{vector.x:F3},{vector.y:F3},{vector.z:F3}";
-            SendData(label, data);
-        }
-        
-        /// <summary>
-        /// Send Vector2 data
-        /// </summary>
-        public void SendVector2(string label, Vector2 vector)
-        {
-            string data = $"{vector.x:F3},{vector.y:F3}";
             SendData(label, data);
         }
         
@@ -930,24 +711,17 @@ namespace AIMLAB.VR
         {
             if (statusText != null)
             {
-                string status = isConnected ? "<color=#00FF00>Connected</color>" : 
-                               (isDiscovering ? "<color=#FFFF00>Discovering...</color>" : 
-                                "<color=#FF0000>Disconnected</color>");
+                string status = isConnected ? "Connected" : (isDiscovering ? "Discovering..." : "Disconnected");
                 if (isConnected && fileOpen)
                 {
-                    status += $" | File: <color=#00FFFF>{currentFilename}</color>";
+                    status += $" | File: {currentFilename}";
                 }
                 statusText.text = $"Status: {status}";
             }
             
-            if (connectionInfoText != null && isConnected)
-            {
-                connectionInfoText.text = $"Connected to: {peerAddress}:{peerPort}";
-            }
-            
             if (dataCountText != null)
             {
-                dataCountText.text = $"Data Sent: <b>{dataCount}</b>";
+                dataCountText.text = $"Data Sent: {dataCount}";
             }
             
             if (openFileButton != null)
@@ -971,18 +745,17 @@ namespace AIMLAB.VR
         {
             if (Time.time - lastDataSend < dataSendInterval) return;
             
-            // Send XR device data if available
-            SendXRDeviceData();
+            // Example: Send headset transform
+            if (Camera.main != null)
+            {
+                SendTransform("Headset", Camera.main.transform);
+            }
             
-            // Send timestamp
+            // Example: Send timestamp
             SendData("Timestamp", Time.time.ToString("F3"));
             
-            // Send frame count
+            // Example: Send frame count
             SendData("Frame", Time.frameCount.ToString());
-            
-            // Send performance metrics
-            float fps = 1.0f / Time.deltaTime;
-            SendData("FPS", fps.ToString("F1"));
             
             lastDataSend = Time.time;
         }
@@ -1005,28 +778,6 @@ namespace AIMLAB.VR
             
             string prefix = $"[AIMLAB-VR] ";
             
-            // Log to debug text if available
-            if (debugText != null && level != LogLevel.Debug)
-            {
-                string coloredMessage = level switch
-                {
-                    LogLevel.Success => $"<color=#00FF00>{message}</color>",
-                    LogLevel.Warning => $"<color=#FFFF00>{message}</color>",
-                    LogLevel.Error => $"<color=#FF0000>{message}</color>",
-                    _ => message
-                };
-                
-                debugText.text = $"{DateTime.Now:HH:mm:ss} - {coloredMessage}\n" + debugText.text;
-                
-                // Limit debug text to last 10 lines
-                string[] lines = debugText.text.Split('\n');
-                if (lines.Length > 10)
-                {
-                    debugText.text = string.Join("\n", lines, 0, 10);
-                }
-            }
-            
-            // Log to console
             switch (level)
             {
                 case LogLevel.Info:
@@ -1060,39 +811,15 @@ namespace AIMLAB.VR
     }
     
     /// <summary>
-    /// Example VR controller data sender using new Input System
+    /// Example VR controller data sender
     /// </summary>
     public class VRControllerDataSender : MonoBehaviour
     {
-        [Header("Data Streamer Reference")]
         public AIMLABVRDataStreamer dataStreamer;
-        
-        [Header("Settings")]
         public bool sendControllerData = true;
         public float sendRate = 0.1f;
         
-        [Header("Input Actions")]
-        public InputActionReference positionAction;
-        public InputActionReference rotationAction;
-        public InputActionReference triggerAction;
-        public InputActionReference gripAction;
-        public InputActionReference primaryButtonAction;
-        public InputActionReference secondaryButtonAction;
-        public InputActionReference thumbstickAction;
-        
         private float lastSend = 0;
-        
-        void Start()
-        {
-            // Enable all input actions
-            if (positionAction != null) positionAction.action.Enable();
-            if (rotationAction != null) rotationAction.action.Enable();
-            if (triggerAction != null) triggerAction.action.Enable();
-            if (gripAction != null) gripAction.action.Enable();
-            if (primaryButtonAction != null) primaryButtonAction.action.Enable();
-            if (secondaryButtonAction != null) secondaryButtonAction.action.Enable();
-            if (thumbstickAction != null) thumbstickAction.action.Enable();
-        }
         
         void Update()
         {
@@ -1102,69 +829,14 @@ namespace AIMLAB.VR
             if (Time.time - lastSend < sendRate)
                 return;
             
-            string controllerName = $"Controller_{gameObject.name}";
+            // Send controller transform
+            dataStreamer.SendTransform($"Controller_{gameObject.name}", transform);
             
-            // Send position if available
-            if (positionAction != null)
-            {
-                Vector3 position = positionAction.action.ReadValue<Vector3>();
-                dataStreamer.SendVector3($"{controllerName}_Position", position);
-            }
-            
-            // Send rotation if available
-            if (rotationAction != null)
-            {
-                Quaternion rotation = rotationAction.action.ReadValue<Quaternion>();
-                dataStreamer.SendQuaternion($"{controllerName}_Rotation", rotation);
-            }
-            
-            // Send trigger value
-            if (triggerAction != null)
-            {
-                float triggerValue = triggerAction.action.ReadValue<float>();
-                dataStreamer.SendData($"{controllerName}_Trigger", triggerValue.ToString("F3"));
-            }
-            
-            // Send grip value
-            if (gripAction != null)
-            {
-                float gripValue = gripAction.action.ReadValue<float>();
-                dataStreamer.SendData($"{controllerName}_Grip", gripValue.ToString("F3"));
-            }
-            
-            // Send button states
-            if (primaryButtonAction != null)
-            {
-                bool primaryPressed = primaryButtonAction.action.ReadValue<float>() > 0.5f;
-                dataStreamer.SendData($"{controllerName}_PrimaryButton", primaryPressed.ToString());
-            }
-            
-            if (secondaryButtonAction != null)
-            {
-                bool secondaryPressed = secondaryButtonAction.action.ReadValue<float>() > 0.5f;
-                dataStreamer.SendData($"{controllerName}_SecondaryButton", secondaryPressed.ToString());
-            }
-            
-            // Send thumbstick
-            if (thumbstickAction != null)
-            {
-                Vector2 thumbstick = thumbstickAction.action.ReadValue<Vector2>();
-                dataStreamer.SendVector2($"{controllerName}_Thumbstick", thumbstick);
-            }
+            // Example: Send button states (replace with actual VR input)
+            bool triggerPressed = Input.GetKey(KeyCode.Space);
+            dataStreamer.SendData($"Controller_{gameObject.name}_Trigger", triggerPressed.ToString());
             
             lastSend = Time.time;
-        }
-        
-        void OnDestroy()
-        {
-            // Disable input actions
-            if (positionAction != null) positionAction.action.Disable();
-            if (rotationAction != null) rotationAction.action.Disable();
-            if (triggerAction != null) triggerAction.action.Disable();
-            if (gripAction != null) gripAction.action.Disable();
-            if (primaryButtonAction != null) primaryButtonAction.action.Disable();
-            if (secondaryButtonAction != null) secondaryButtonAction.action.Disable();
-            if (thumbstickAction != null) thumbstickAction.action.Disable();
         }
     }
 }

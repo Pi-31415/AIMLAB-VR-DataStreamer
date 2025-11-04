@@ -3,7 +3,11 @@
 ## Version: v2.0
 ## Date: 02 November 2025
 ## Changelog:
-- v2.0 (02 November 2025): Repository cleanup, v2 compiler with version selection
+- v2.0 (02 November 2025): 
+  * Made fixed C++ version the default
+  * Made Modern C# (TextMeshPro) version the default
+  * Repository cleanup and simplified compiler
+  * Legacy versions preserved for compatibility
 - v1.0 (2025): Initial release with core features
 
 ### Overview
@@ -46,20 +50,11 @@ Unity VR Application (C#)          C++ Data Logger
    # Windows - Use the v2 compiler (RECOMMENDED)
    compile_aimlab_v2.bat
    
-   # This will prompt you to choose:
-   # 1. Simplified version (recommended - better compatibility)
-   # 2. Fixed version (with proper Windows headers)
-   # 3. Both versions
-   
    # Or manually:
-   # Simplified version
-   g++ -o aimlab_streamer.exe aimlab_vr_datastreamer_simple.cpp -lws2_32 -std=c++11
-   
-   # Fixed version
-   g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=c++11
+   g++ -o aimlab_streamer.exe aimlab_vr_datastreamer.cpp -lws2_32 -std=c++11
    
    # Linux
-   g++ -o aimlab_streamer aimlab_vr_datastreamer_simple.cpp -pthread -std=c++11
+   g++ -o aimlab_streamer aimlab_vr_datastreamer.cpp -pthread -std=c++11
    ```
 
 3. **Running**:
@@ -71,6 +66,8 @@ Unity VR Application (C#)          C++ Data Logger
 
 1. **Add Script to Project**:
    - Copy `AIMLABVRDataStreamer.cs` to your Unity project's Assets folder
+   - **Requirements**: TextMeshPro package (recommended for modern Unity)
+   - For older Unity versions, use `AIMLABVRDataStreamer_Legacy.cs` instead
    - Add the script to a GameObject in your scene
 
 2. **Configure in Inspector**:
@@ -300,12 +297,12 @@ Created for AIMLAB VR research projects
 Pi Ko - pi.ko@nyu.edu
 
 ### Version History
-- v2.0 (02 November 2025): Repository cleanup and v2 compiler
-  - Removed duplicate/obsolete files
-  - Added v2 batch compiler with version selection
-  - Separated simplified and fixed C++ versions
-  - Cleaned up data directory
-  - Updated documentation
+- v2.0 (02 November 2025): Major update with default versions
+  - Made fixed C++ version the default (proper Windows headers)
+  - Made Modern C# with TextMeshPro the default
+  - Simplified compiler (single version build)
+  - Legacy versions preserved for compatibility
+  - Repository cleanup and documentation updates
 - v1.0 (2025): Initial release with core features
   - Auto-discovery
   - File management

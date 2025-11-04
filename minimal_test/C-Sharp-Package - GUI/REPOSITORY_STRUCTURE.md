@@ -17,12 +17,11 @@ C-Sharp-Package - GUI/
 ├── 🔧 compile_aimlab_v2.bat         # v2 Compiler (RECOMMENDED)
 │
 ├── 💻 C++ Source Files
-│   ├── aimlab_vr_datastreamer_simple.cpp   # Simplified version (recommended)
-│   └── aimlab_vr_datastreamer_fixed.cpp    # Fixed version (Windows headers)
+│   └── aimlab_vr_datastreamer.cpp          # Main C++ streamer (v2.0 - Fixed version)
 │
 ├── 🎮 Unity C# Scripts
-│   ├── AIMLABVRDataStreamer.cs             # Main Unity streamer
-│   └── AIMLABVRDataStreamer_Modern.cs      # Modern variant
+│   ├── AIMLABVRDataStreamer.cs             # Main Unity streamer (v2.0 - Modern with TextMeshPro)
+│   └── AIMLABVRDataStreamer_Legacy.cs      # Legacy version (for older Unity)
 │
 ├── 📦 Unity Package
 │   └── AIMLAB_Streamer_Unity_Package.unitypackage
@@ -30,9 +29,8 @@ C-Sharp-Package - GUI/
 ├── 🗂️ Data Directory
 │   └── aimlab_data/                        # Output data files (CSV)
 │
-└── 🚀 Compiled Executables (after compilation)
-    ├── aimlab_streamer.exe                 # Simplified version
-    └── aimlab_streamer_fixed.exe           # Fixed version
+└── 🚀 Compiled Executable (after compilation)
+    └── aimlab_streamer.exe                 # Main executable
 ```
 
 ---
@@ -42,13 +40,10 @@ C-Sharp-Package - GUI/
 ### Core Files
 
 #### `compile_aimlab_v2.bat`
-**Purpose:** Interactive batch compiler for Windows  
+**Purpose:** Batch compiler for Windows  
 **Features:**
 - Checks for g++ compiler availability
-- Offers 3 compilation options:
-  1. Simplified version (recommended)
-  2. Fixed version (with Windows headers)
-  3. Both versions
+- Compiles the main C++ data streamer
 - Auto-creates `aimlab_data/` directory
 - Provides detailed usage instructions
 
@@ -57,33 +52,29 @@ C-Sharp-Package - GUI/
 compile_aimlab_v2.bat
 ```
 
+**Output:** `aimlab_streamer.exe`
+
 ---
 
 ### C++ Source Files
 
-#### `aimlab_vr_datastreamer_simple.cpp`
-**Purpose:** Simplified C++ data logger with better compatibility  
-**Features:**
-- Cross-platform socket implementation
-- Simplified directory creation
-- Better Windows/Linux compatibility
-- Recommended for most users
-
-**Compilation:**
-```cmd
-g++ -o aimlab_streamer.exe aimlab_vr_datastreamer_simple.cpp -lws2_32 -std=c++11
-```
-
-#### `aimlab_vr_datastreamer_fixed.cpp`
-**Purpose:** Fixed version with proper Windows headers  
+#### `aimlab_vr_datastreamer.cpp`
+**Purpose:** Main C++ data logger with proper Windows headers (v2.0)  
 **Features:**
 - Full Windows API support
 - Proper directory attribute checking
+- Cross-platform compatibility (Windows/Linux)
 - Advanced Windows-specific features
+- Auto-discovery protocol
+- Real-time data streaming
 
 **Compilation:**
 ```cmd
-g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=c++11
+# Windows
+g++ -o aimlab_streamer.exe aimlab_vr_datastreamer.cpp -lws2_32 -std=c++11
+
+# Linux
+g++ -o aimlab_streamer aimlab_vr_datastreamer.cpp -pthread -std=c++11
 ```
 
 ---
@@ -91,13 +82,20 @@ g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=
 ### Unity C# Scripts
 
 #### `AIMLABVRDataStreamer.cs`
-**Purpose:** Main Unity integration script  
+**Purpose:** Main Unity integration script (v2.0 - Modern Version)  
 **Features:**
 - Auto-discovery protocol
 - UDP communication with C++ node
 - File management commands
 - Data streaming (Vector3, Quaternion, Transform)
-- UI integration support
+- TextMeshPro UI support
+- Unity Input System integration (optional)
+- XR/VR support
+
+**Requirements:**
+- TextMeshPro package
+- Input System package (optional)
+- XR Plugin Management (for VR, optional)
 
 **Usage:**
 1. Copy to Unity Assets folder
@@ -105,9 +103,18 @@ g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=
 3. Configure in Inspector
 4. Call methods from your scripts
 
-#### `AIMLABVRDataStreamer_Modern.cs`
-**Purpose:** Modern variant with enhanced features  
-**Note:** Check this file for additional modern C# patterns
+#### `AIMLABVRDataStreamer_Legacy.cs`
+**Purpose:** Legacy Unity integration script (v1.0)  
+**Features:**
+- Same core functionality as v2.0
+- Uses standard Unity UI instead of TextMeshPro
+- Compatible with older Unity versions
+- No special package requirements
+
+**When to Use:**
+- Older Unity projects without TextMeshPro
+- Projects that need to maintain compatibility
+- Simple projects without modern UI needs
 
 ---
 
@@ -154,22 +161,23 @@ g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=
 ```cmd
 compile_aimlab_v2.bat
 ```
-Follow the prompts to select version.
 
 **Option B: Manual Compilation**
 ```cmd
-# Simplified version
-g++ -o aimlab_streamer.exe aimlab_vr_datastreamer_simple.cpp -lws2_32 -std=c++11
+# Windows
+g++ -o aimlab_streamer.exe aimlab_vr_datastreamer.cpp -lws2_32 -std=c++11
 
-# Fixed version
-g++ -o aimlab_streamer_fixed.exe aimlab_vr_datastreamer_fixed.cpp -lws2_32 -std=c++11
+# Linux
+g++ -o aimlab_streamer aimlab_vr_datastreamer.cpp -pthread -std=c++11
 ```
 
 ### 2. Unity Setup
 
 1. Copy `AIMLABVRDataStreamer.cs` to Unity Assets
-2. Attach to GameObject
-3. Configure autoConnect in Inspector
+2. Ensure TextMeshPro package is installed
+3. Attach script to GameObject
+4. Configure autoConnect in Inspector
+5. (Optional) For older Unity, use `AIMLABVRDataStreamer_Legacy.cs`
 
 ### 3. Run
 
@@ -253,9 +261,11 @@ Allow UDP traffic on ports 45000-45101
 ## 📝 Changelog
 
 ### v2.0 (02 November 2025)
+- Made fixed C++ version the default
+- Made Modern C# (TextMeshPro) the default
+- Simplified compiler (single version build)
+- Legacy versions preserved for compatibility
 - Removed duplicate/obsolete files
-- Added v2 batch compiler with version selection
-- Separated simplified and fixed C++ versions
 - Cleaned up data directory
 - Updated documentation
 - Added .gitignore
