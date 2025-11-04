@@ -37,5 +37,8 @@ imgui.ini
 # Electron builder cache
 .cache/
 
+# Experimental data (CSV files)
+ExperimentalData/
+
 # Build resources (keep build/ directory for icons)
 # build/ is intentionally NOT ignored as it contains icon resources

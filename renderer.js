@@ -48,7 +48,6 @@ const elements = {
     
     // Output areas
     logOutput: document.getElementById('logOutput'),
-    dataStream: document.getElementById('dataStream'),
     recordingStatus: document.getElementById('recordingStatus'),
     
     // Modal
@@ -64,9 +63,9 @@ const elements = {
  */
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    addLog('System initialized', 'success');
-    addLog('Ready to connect to Unity and Arduino', 'info');
-    addLog('Listening on UDP port 45101 for Unity VR data', 'info');
+    addLog('AIMLAB VR Data Collector initialized', 'success');
+    addLog('Ready to connect to Unity and Vibration Motor', 'info');
+    addLog('Discovery port: 45001 | Data port: 45102', 'info');
 });
 
 // ==================== Event Listeners Setup ====================
@@ -178,22 +177,22 @@ async function stopExperiment() {
     }
 }
 
-// ==================== Arduino Connection Functions ====================
+// ==================== Vibration Motor Connection Functions ====================
 
 /**
- * Connect to Arduino vibration motor controller
+ * Connect to vibration motor controller
  */
 async function connectToArduino() {
     elements.connectArduino.disabled = true;
-    addLog('Scanning for Arduino...', 'info');
+    addLog('Scanning for vibration motor controller...', 'info');
     
     const result = await window.api.connectToArduino();
     
     if (result.success) {
         elements.connectArduino.textContent = 'Connected';
         elements.testMotor.disabled = false;
-        addLog(`Arduino connected on ${result.port}`, 'success');
-        addLog('Waiting for Arduino handshake...', 'info');
+        addLog(`Vibration motor connected on ${result.port}`, 'success');
+        addLog('Waiting for motor handshake...', 'info');
     } else {
         elements.connectArduino.disabled = false;
         addLog(`Failed to connect: ${result.error}`, 'error');
@@ -213,13 +212,13 @@ async function testMotor() {
 }
 
 /**
- * Refresh Arduino connection
+ * Refresh vibration motor connection
  */
 async function refreshArduinoConnection() {
-    addLog('Refreshing Arduino connection...', 'info');
+    addLog('Refreshing motor connection...', 'info');
     await window.api.disconnectFromArduino();
     elements.connectArduino.disabled = false;
-    elements.connectArduino.textContent = 'Connect Arduino';
+    elements.connectArduino.textContent = 'Connect Motor';
     elements.testMotor.disabled = true;
     updateConnectionStatus({ unity: unityConnected, arduino: false });
     setTimeout(() => connectToArduino(), 500);
@@ -273,7 +272,15 @@ async function stopRecording() {
         elements.recordingStatus.textContent = '';
         elements.recordingStatus.classList.remove('active');
         addLog(`Recording saved: ${result.filename}.csv`, 'success');
-        addLog(`File location: data/${result.filename}.csv`, 'info');
+        
+        // --- ADD THIS LINE ---
+        // Log the full path returned from the main process
+        if (result.path) {
+            addLog(`File saved in: ${result.path}`, 'info');
+        } else {
+            addLog(`File location: ExperimentalData/${result.filename}.csv`, 'info');
+        }
+        // --- END ADDITION ---
     } else {
         addLog(`Failed to stop recording: ${result.error}`, 'error');
     }
@@ -305,20 +312,8 @@ function updateConnectionStatus(status) {
  * @param {Object} data - VR data object from Unity
  */
 function displayData(data) {
-    const display = 
-        `Position: [${formatNum(data.positionX)}, ${formatNum(data.positionY)}, ${formatNum(data.positionZ)}]\n` +
-        `Rotation: [${formatNum(data.rotationX)}, ${formatNum(data.rotationY)}, ${formatNum(data.rotationZ)}, ${formatNum(data.rotationW)}]\n` +
-        `Trigger: ${formatNum(data.triggerValue)} | Grip: ${formatNum(data.gripValue)}\n` +
-        `Primary: ${data.primaryButton ? 'ON' : 'OFF'} | Secondary: ${data.secondaryButton ? 'ON' : 'OFF'}\n` +
-        `Timestamp: ${data.timestamp}`;
-    
-    elements.dataStream.textContent = display;
-    
-    // Add a visual indicator that data is flowing
-    elements.dataStream.style.borderLeft = '3px solid #4CAF50';
-    setTimeout(() => {
-        elements.dataStream.style.borderLeft = 'none';
-    }, 100);
+    // Data is being received and will be saved to CSV
+    // Visual indicator removed (no longer displaying live stream)
 }
 
 /**

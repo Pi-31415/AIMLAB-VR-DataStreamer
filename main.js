@@ -3,7 +3,7 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 04 November 2025
- * Version: v2.8
+ * Version: v3.1
  * 
  * Description:
  * Main Electron process for AIMLAB VR Data Collector.
@@ -11,6 +11,22 @@
  * Arduino serial communication, CSV file recording, and application lifecycle.
  * 
  * Changelog:
+ * v3.1 - 04 November 2025 - Force file creation fix
+ *        - CSV file now created immediately with headers (not delayed)
+ *        - Fixes issue where file wasn't created if no data received
+ *        - Added csvWriter.writeRecords([]) to force header write
+ *        - Better logging with full file paths
+ * v3.0 - 04 November 2025 - ExperimentalData folder implementation
+ *        - Changed save location from 'data' to 'ExperimentalData'
+ *        - More descriptive folder name for research data
+ *        - Created ExperimentalData directory
+ *        - Updated .gitignore to exclude ExperimentalData
+ * v2.9 - 04 November 2025 - ENOTDIR fix and path resolution
+ *        - Fixed path resolution for packaged vs development mode
+ *        - Added extensive diagnostic logging
+ *        - Removed .gitkeep file that was causing issues
+ *        - Multiple fallback strategies for directory creation
+ *        - Write permission verification
  * v2.8 - 04 November 2025 - Experiment control and recording fixes
  *        - Added Start/Stop Experiment commands to control Unity
  *        - Fixed ENOTDIR error with proper directory creation
@@ -88,11 +104,14 @@ const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
-    height: 700,
-    minWidth: 800,
-    minHeight: 600,
+    height: 800,
+    minWidth: 1000,
+    maxWidth: 1000,
+    minHeight: 800,
+    maxHeight: 800,
+    resizable: false,
     backgroundColor: '#FFFFFF',
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -627,22 +646,55 @@ ipcMain.handle('disconnect-unity', async () => {
  */
 ipcMain.handle('start-recording', async (event, filename) => {
   try {
-    // Create data directory properly
-    const dataDir = path.join(__dirname, 'data');
+    // Create data directory properly with extensive error handling
+    // Use app.getPath for proper path resolution in packaged app
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
     
-    // Check if 'data' exists and is a file (not directory)
+    // --- Use ExperimentalData folder ---
+    const dataDir = path.join(appPath, 'ExperimentalData');
+    // --- END MODIFICATION ---
+    
+    sendLog(`Attempting to create/verify data directory: ${dataDir}`, 'debug');
+    
+    // Check if 'data' exists
+    let dirExists = false;
     try {
       const stats = fs.statSync(dataDir);
-      if (!stats.isDirectory()) {
-        // It's a file, remove it and create directory
+      if (stats.isDirectory()) {
+        dirExists = true;
+        sendLog('Data directory already exists', 'debug');
+      } else {
+        // It's a file, not a directory - remove it
+        sendLog('Found file named "ExperimentalData", removing it...', 'warning');
         fs.unlinkSync(dataDir);
-        fs.mkdirSync(dataDir, { recursive: true });
-        sendLog('Removed data file and created directory', 'info');
       }
     } catch (err) {
-      // Doesn't exist, create it
-      fs.mkdirSync(dataDir, { recursive: true });
-      sendLog('Created data directory', 'info');
+      // Doesn't exist
+      sendLog('ExperimentalData directory does not exist, creating...', 'debug');
+    }
+    
+    // Create directory if it doesn't exist
+    if (!dirExists) {
+      try {
+        fs.mkdirSync(dataDir, { recursive: true });
+        sendLog(`Created data directory: ${dataDir}`, 'success');
+      } catch (mkdirErr) {
+        // Last resort - try without recursive
+        try {
+          fs.mkdirSync(dataDir);
+          sendLog('Created data directory (non-recursive)', 'success');
+        } catch (finalErr) {
+          throw new Error(`Cannot create data directory: ${finalErr.message}`);
+        }
+      }
+    }
+    
+    // Verify directory is actually accessible
+    try {
+      fs.accessSync(dataDir, fs.constants.W_OK);
+      sendLog('Data directory is writable', 'debug');
+    } catch (accessErr) {
+      throw new Error(`Data directory not writable: ${accessErr.message}`);
     }
     
     // Clean filename - remove invalid characters
@@ -693,17 +745,50 @@ ipcMain.handle('start-recording', async (event, filename) => {
       ]
     });
     
+    // --- THIS IS THE FIX ---
+    // Force-write the header to create the file immediately
+    try {
+      await csvWriter.writeRecords([]); // This creates the file with the header
+      sendLog('CSV file created with headers', 'debug');
+    } catch (writeErr) {
+      throw new Error(`Failed to create file: ${writeErr.message}`);
+    }
+    // --- END OF FIX ---
+    
     isRecording = true;
     currentFilename = finalFilename;
     dataBuffer = [];
     
     sendLog(`Recording started: ${finalFilename}.csv`, 'success');
     sendLog(`Saving to: ${filepath}`, 'info');
+    sendLog(`File created: ExperimentalData/${finalFilename}.csv`, 'success');
     
     return { success: true, filename: finalFilename, path: filepath };
     
   } catch (error) {
+    // Detailed error logging
     sendLog(`Failed to start recording: ${error.message}`, 'error');
+    sendLog(`Error code: ${error.code}`, 'error');
+    sendLog(`Error stack: ${error.stack}`, 'debug');
+    
+    // Try to diagnose the issue
+    try {
+      const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
+      const dataDir = path.join(appPath, 'data');
+      sendLog(`Data directory path: ${dataDir}`, 'error');
+      sendLog(`__dirname: ${__dirname}`, 'error');
+      sendLog(`app.isPackaged: ${app.isPackaged}`, 'error');
+      
+      if (fs.existsSync(dataDir)) {
+        const stats = fs.statSync(dataDir);
+        sendLog(`Data exists - isDirectory: ${stats.isDirectory()}, isFile: ${stats.isFile()}`, 'error');
+      } else {
+        sendLog('Data path does not exist!', 'error');
+      }
+    } catch (diagErr) {
+      sendLog(`Diagnostic error: ${diagErr.message}`, 'error');
+    }
+    
     return { success: false, error: error.message };
   }
 });
@@ -724,10 +809,23 @@ ipcMain.handle('stop-recording', async () => {
     csvWriter = null;
     dataBuffer = [];
     
-    sendLog(`Recording stopped: ${recordedFile}.csv`, 'success');
-    sendLog(`File saved in: ${path.join(__dirname, 'data', recordedFile + '.csv')}`, 'info');
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
     
-    return { success: true, filename: recordedFile };
+    // --- Use ExperimentalData folder ---
+    const filePath = path.join(appPath, 'ExperimentalData', recordedFile + '.csv');
+    // --- END MODIFICATION ---
+    
+    sendLog(`Recording stopped: ${recordedFile}.csv`, 'success');
+    
+    // --- FIX for log message ---
+    sendLog(`File location: ExperimentalData/${recordedFile}.csv`, 'info');
+    // --- END FIX ---
+    
+    sendLog(`Full path: ${filePath}`, 'info');
+    
+    // --- FIX for return value ---
+    return { success: true, filename: recordedFile, path: filePath };
+    // --- END FIX ---
     
   } catch (error) {
     sendLog(`Failed to stop recording: ${error.message}`, 'error');

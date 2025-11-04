@@ -34,10 +34,15 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
                     Unity: <span id="unityStatus" class="status-indicator disconnected">●</span>
                 </span>
                 <span class="status-item">
-                    Arduino: <span id="arduinoStatus" class="status-indicator disconnected">●</span>
+                    Vibration Motor: <span id="arduinoStatus" class="status-indicator disconnected">●</span>
                 </span>
             </div>
         </header>
+        
+        <!-- Version Info -->
+        <div class="version-info">
+            Version 3.1.0 | Ports: Unity 45000/45101, Electron 45001/45102
+        </div>
 
         <!-- Control Panel -->
         <div class="control-panel">
@@ -59,10 +64,10 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
                 <div class="recording-status" id="recordingStatus"></div>
             </div>
 
-            <!-- Arduino Controls -->
+            <!-- Vibration Motor Controls -->
             <div class="control-group">
                 <h3>Vibration Motor</h3>
-                <button id="connectArduino" class="btn-primary">Connect Arduino</button>
+                <button id="connectArduino" class="btn-primary">Connect Motor</button>
                 <button id="testMotor" class="btn-secondary" disabled>Test Motor (1)</button>
                 <button id="refreshArduino" class="btn-secondary">Refresh</button>
             </div>
@@ -77,12 +82,14 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div id="logOutput" class="log-output"></div>
         </div>
 
-        <!-- Data Preview -->
-        <div class="data-preview">
-            <h3>Live Data Stream</h3>
-            <div id="dataStream" class="data-stream">Waiting for data...</div>
-        </div>
     </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+        <p>Developed at <strong>Applied Interactive Multimedia Laboratory</strong></p>
+        <p>NYU Abu Dhabi</p>
+        <p>by Pi Ko (<a href="mailto:pi.ko@nyu.edu">pi.ko@nyu.edu</a>)</p>
+    </footer>
 
     <!-- Modal for file rename notification -->
     <div id="modal" class="modal">
