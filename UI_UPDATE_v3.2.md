@@ -163,3 +163,5 @@ ipcMain.handle('open-data-folder', async () => {
 **Status:** ✅ Complete  
 **Build Required:** Yes (run `npm run build` or `build_exe.bat`)
 
+
+

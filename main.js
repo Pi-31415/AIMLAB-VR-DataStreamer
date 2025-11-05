@@ -1,21 +1,25 @@
-/**
- * AIMLAB VR Streamer - Main Process
- * 
- * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 05 November 2025
- * Version: v3.3
- * 
- * Description:
- * Main Electron process for AIMLAB VR Data Collector.
- * Handles Unity UDP data reception with full bidirectional protocol,
- * Arduino serial communication, CSV file recording, and application lifecycle.
- * 
- * Changelog:
- * v3.3 - 05 November 2025 - Integrated recording with experiments
- *        - Added check-file-exists handler for pre-validation
- *        - Start Experiment now automatically starts recording
- *        - Stop Experiment now automatically stops recording
- *        - File existence check prevents overwriting dataF
+ /**
+  * AIMLAB VR Streamer - Main Process
+  * 
+  * Author: Pi Ko (pi.ko@nyu.edu)
+  * Date: 05 November 2025
+  * Version: v3.4
+  * 
+  * Description:
+  * Main Electron process for AIMLAB VR Data Collector.
+  * Handles Unity UDP data reception with full bidirectional protocol,
+  * Arduino serial communication, CSV file recording, and application lifecycle.
+  * 
+  * Changelog:
+  * v3.4 - 05 November 2025 - Added left/right hand experiment support
+  *        - Added start-left-experiment and start-right-experiment IPC handlers
+  *        - Sends CMD:START_LEFT_EXPERIMENT or CMD:START_RIGHT_EXPERIMENT to Unity
+  *        - Filenames automatically prefixed with LEFT_ or RIGHT_
+  * v3.3 - 05 November 2025 - Integrated recording with experiments
+  *        - Added check-file-exists handler for pre-validation
+  *        - Start Experiment now automatically starts recording
+  *        - Stop Experiment now automatically stops recording
+  *        - File existence check prevents overwriting data
  * v3.2 - 05 November 2025 - Added folder opening functionality
  *        - Added open-data-folder IPC handler to open ExperimentalData folder in Explorer
  *        - Uses shell.openPath for cross-platform folder opening
@@ -102,9 +106,10 @@ const MSG_DATA = "DATA";
 const MSG_KEEPALIVE = "KEEPALIVE";
 const MSG_COMMAND = "CMD";
 
-// Command Constants
-const CMD_START_EXPERIMENT = "START_EXPERIMENT";
-const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
+ // Command Constants
+ const CMD_START_LEFT_EXPERIMENT = "START_LEFT_EXPERIMENT";
+ const CMD_START_RIGHT_EXPERIMENT = "START_RIGHT_EXPERIMENT";
+ const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
 
 /**
  * Creates the main application window
@@ -362,6 +367,23 @@ ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
     
     dataServer.on('message', (msg, rinfo) => {
       const message = msg.toString();
+
+      // Add this to your UDP message handler
+if (message.startsWith('VIBRATE:')) {
+  const motorId = message.split(':')[1];
+  // Forward to Arduino
+  if (arduinoPort) {
+      arduinoPort.write(`1\n`); // Send motor command
+  }
+} else if (message.startsWith('VIBRATE_CUSTOM:')) {
+  const parts = message.split(':');
+  const duration = parts[1];
+  const intensity = parts[2];
+  // Send custom command to Arduino
+  if (arduinoPort) {
+      arduinoPort.write(`C:${duration}:${intensity}\n`);
+  }
+}
       
       // Handle different message types
       if (message.startsWith(MSG_HANDSHAKE)) {
@@ -1051,43 +1073,79 @@ ipcMain.handle('test-motor', async () => {
   }
 });
 
-// ==================== Unity Experiment Control ====================
-
-/**
- * Start experiment in Unity
- */
-ipcMain.handle('start-experiment', async () => {
-  try {
-    if (!unityConnected) {
-      throw new Error('Unity not connected');
-    }
-    
-    if (!unityEndpoint || !dataServer) {
-      throw new Error('Unity endpoint not established');
-    }
-    
-    // Send START_EXPERIMENT command to Unity
-    const commandMsg = `${MSG_COMMAND}:${CMD_START_EXPERIMENT}`;
-    dataServer.send(
-      Buffer.from(commandMsg),
-      UNITY_DATA_PORT,
-      unityEndpoint.address,
-      (err) => {
-        if (err) {
-          sendLog(`Failed to send start command: ${err.message}`, 'error');
-        } else {
-          sendLog('Start Experiment command sent to Unity', 'success');
-        }
-      }
-    );
-    
-    return { success: true };
-    
-  } catch (error) {
-    sendLog(`Failed to start experiment: ${error.message}`, 'error');
-    return { success: false, error: error.message };
-  }
-});
+ // ==================== Unity Experiment Control ====================
+ 
+ /**
+  * Start left hand experiment in Unity
+  */
+ ipcMain.handle('start-left-experiment', async () => {
+   try {
+     if (!unityConnected) {
+       throw new Error('Unity not connected');
+     }
+     
+     if (!unityEndpoint || !dataServer) {
+       throw new Error('Unity endpoint not established');
+     }
+     
+     // Send START_LEFT_EXPERIMENT command to Unity
+     const commandMsg = `${MSG_COMMAND}:${CMD_START_LEFT_EXPERIMENT}`;
+     dataServer.send(
+       Buffer.from(commandMsg),
+       UNITY_DATA_PORT,
+       unityEndpoint.address,
+       (err) => {
+         if (err) {
+           sendLog(`Failed to send start left command: ${err.message}`, 'error');
+         } else {
+           sendLog('Start Left Hand Experiment command sent to Unity', 'success');
+         }
+       }
+     );
+     
+     return { success: true };
+     
+   } catch (error) {
+     sendLog(`Failed to start left hand experiment: ${error.message}`, 'error');
+     return { success: false, error: error.message };
+   }
+ });
+ 
+ /**
+  * Start right hand experiment in Unity
+  */
+ ipcMain.handle('start-right-experiment', async () => {
+   try {
+     if (!unityConnected) {
+       throw new Error('Unity not connected');
+     }
+     
+     if (!unityEndpoint || !dataServer) {
+       throw new Error('Unity endpoint not established');
+     }
+     
+     // Send START_RIGHT_EXPERIMENT command to Unity
+     const commandMsg = `${MSG_COMMAND}:${CMD_START_RIGHT_EXPERIMENT}`;
+     dataServer.send(
+       Buffer.from(commandMsg),
+       UNITY_DATA_PORT,
+       unityEndpoint.address,
+       (err) => {
+         if (err) {
+           sendLog(`Failed to send start right command: ${err.message}`, 'error');
+         } else {
+           sendLog('Start Right Hand Experiment command sent to Unity', 'success');
+         }
+       }
+     );
+     
+     return { success: true };
+     
+   } catch (error) {
+     sendLog(`Failed to start right hand experiment: ${error.message}`, 'error');
+     return { success: false, error: error.message };
+   }
+ });
 
 /**
  * Stop experiment in Unity

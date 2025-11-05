@@ -4,12 +4,16 @@ AIMLAB VR Data Collector - User Interface
 
 Author: Pi Ko (pi.ko@nyu.edu)
 Date: 05 November 2025
-Version: v3.3
+Version: v3.4
 
 Description:
 Minimal UI for VR data collection from Unity and Arduino motor control.
 
 Changelog:
+v3.4 - 05 November 2025 - Added left/right hand experiment support
+       - Split Start Experiment into Start Left Hand and Start Right Hand buttons
+       - Filenames automatically prefixed with LEFT_ or RIGHT_
+       - Separate Unity commands for left and right hand experiments
 v3.3 - 05 November 2025 - Integrated recording with Start/Stop Experiment
        - Added Experiment ID textbox for file naming
        - Start Experiment now automatically starts CSV recording
@@ -49,7 +53,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
         
         <!-- Version Info -->
         <div class="version-info">
-            Version 3.3.0 | Ports: Unity 45000/45101, Electron 45001/45102
+            Version 3.4.0 | Ports: Unity 45000/45101, Electron 45001/45102
         </div>
 
         <!-- Control Panel -->
@@ -59,7 +63,8 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
                 <h3>Unity Connection</h3>
                 <button id="connectUnity" class="btn-primary">Connect to Unity</button>
                 <input type="text" id="experimentId" placeholder="Enter Experiment ID (required)" />
-                <button id="startExperiment" class="btn-success" disabled>Start Experiment</button>
+                <button id="startLeftExperiment" class="btn-success" disabled>Start Left Hand</button>
+                <button id="startRightExperiment" class="btn-success" disabled>Start Right Hand</button>
                 <button id="stopExperiment" class="btn-danger" disabled>Stop Experiment</button>
                 <button id="refreshUnity" class="btn-secondary">Refresh</button>
                 <div class="recording-status" id="recordingStatus"></div>

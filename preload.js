@@ -3,13 +3,16 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.3
+ * Version: v3.4
  * 
  * Description:
  * Preload script for Electron contextBridge to safely expose IPC functionality
  * for Unity UDP data streaming and Arduino serial communication.
  * 
  * Changelog:
+ * v3.4 - 05 November 2025 - Added left/right hand experiment support
+ *        - Added startLeftExperiment and startRightExperiment functions
+ *        - Separate commands for left and right hand experiments
  * v3.3 - 05 November 2025 - Added file existence checking
  *        - Added checkFileExists function for validation before recording
  *        - Exposed recording handlers for experiment integration
@@ -101,10 +104,16 @@ contextBridge.exposeInMainWorld('api', {
   
   // Experiment Control
   /**
-   * Start experiment in Unity
+   * Start left hand experiment in Unity
    * @returns {Promise<Object>} Result with success status
    */
-  startExperiment: () => ipcRenderer.invoke('start-experiment'),
+  startLeftExperiment: () => ipcRenderer.invoke('start-left-experiment'),
+  
+  /**
+   * Start right hand experiment in Unity
+   * @returns {Promise<Object>} Result with success status
+   */
+  startRightExperiment: () => ipcRenderer.invoke('start-right-experiment'),
   
   /**
    * Stop experiment in Unity

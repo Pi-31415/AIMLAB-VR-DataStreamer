@@ -3,7 +3,7 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.3
+ * Version: v3.4
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
@@ -11,6 +11,10 @@
  * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v3.4 - 05 November 2025 - Added left/right hand experiment support
+ *        - Split Start Experiment into two separate buttons
+ *        - Filenames prefixed with LEFT_ or RIGHT_
+ *        - Separate Unity commands for each hand
  * v3.3 - 05 November 2025 - Integrated recording with experiments
  *        - Added Experiment ID textbox for file naming
  *        - Start Experiment automatically starts recording
@@ -43,7 +47,8 @@ const elements = {
     // Buttons
     connectUnity: document.getElementById('connectUnity'),
     refreshUnity: document.getElementById('refreshUnity'),
-    startExperiment: document.getElementById('startExperiment'),
+    startLeftExperiment: document.getElementById('startLeftExperiment'),
+    startRightExperiment: document.getElementById('startRightExperiment'),
     stopExperiment: document.getElementById('stopExperiment'),
     connectArduino: document.getElementById('connectArduino'),
     testMotor: document.getElementById('testMotor'),
@@ -85,7 +90,8 @@ function setupEventListeners() {
     // Unity Controls
     elements.connectUnity.addEventListener('click', connectToUnity);
     elements.refreshUnity.addEventListener('click', refreshUnityConnection);
-    elements.startExperiment.addEventListener('click', startExperiment);
+    elements.startLeftExperiment.addEventListener('click', () => startExperiment('left'));
+    elements.startRightExperiment.addEventListener('click', () => startExperiment('right'));
     elements.stopExperiment.addEventListener('click', stopExperiment);
     
     // Arduino Controls
@@ -153,8 +159,9 @@ async function refreshUnityConnection() {
 
 /**
  * Start experiment in Unity and begin recording
+ * @param {string} hand - Which hand to use ('left' or 'right')
  */
-async function startExperiment() {
+async function startExperiment(hand = 'right') {
     const experimentId = elements.experimentId.value.trim();
     
     // Validate Experiment ID
@@ -169,17 +176,19 @@ async function startExperiment() {
         return;
     }
     
+    // Modify filename based on hand
+    const modifiedId = `${hand.toUpperCase()}_${experimentId}`;
+    
     // Check if file already exists
-    const checkResult = await window.api.checkFileExists(experimentId);
+    const checkResult = await window.api.checkFileExists(modifiedId);
     if (checkResult.exists) {
-        // Show modal alert
-        showFileExistsModal(experimentId);
+        showFileExistsModal(modifiedId);
         return;
     }
     
     // Start recording first
-    addLog(`Starting recording with Experiment ID: ${experimentId}...`, 'info');
-    const recordResult = await window.api.startRecording(experimentId);
+    addLog(`Starting ${hand} hand recording with ID: ${modifiedId}...`, 'info');
+    const recordResult = await window.api.startRecording(modifiedId);
     
     if (!recordResult.success) {
         addLog(`Failed to start recording: ${recordResult.error}`, 'error');
@@ -191,18 +200,20 @@ async function startExperiment() {
     elements.recordingStatus.classList.add('active');
     addLog(`Recording started: ${recordResult.filename}.csv`, 'success');
     
-    // Then send Start Experiment command to Unity
-    addLog('Sending Start Experiment command to Unity...', 'info');
-    const result = await window.api.startExperiment();
+    // Send appropriate command based on hand
+    const command = hand === 'left' ? 'startLeftExperiment' : 'startRightExperiment';
+    addLog(`Sending Start ${hand.charAt(0).toUpperCase() + hand.slice(1)} Hand Experiment command to Unity...`, 'info');
+    const result = await window.api[command]();
     
     if (result.success) {
-        elements.startExperiment.disabled = true;
+        elements.startLeftExperiment.disabled = true;
+        elements.startRightExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
         elements.experimentId.disabled = true;
-        addLog('Experiment started in Unity', 'success');
+        addLog(`${hand.charAt(0).toUpperCase() + hand.slice(1)} hand experiment started in Unity`, 'success');
         addLog('Unity should now be sending VR data', 'info');
     } else {
-        addLog(`Failed to start experiment: ${result.error}`, 'error');
+        addLog(`Failed to start ${hand} hand experiment: ${result.error}`, 'error');
         // Stop recording if experiment failed to start
         await stopRecordingOnly();
     }
@@ -225,7 +236,8 @@ async function stopExperiment() {
     // Stop recording regardless of Unity result
     await stopRecordingOnly();
     
-    elements.startExperiment.disabled = false;
+    elements.startLeftExperiment.disabled = false;
+    elements.startRightExperiment.disabled = false;
     elements.stopExperiment.disabled = true;
     elements.experimentId.disabled = false;
 }
@@ -327,7 +339,8 @@ function updateConnectionStatus(status) {
     elements.arduinoStatus.className = `status-indicator ${status.arduino ? 'connected' : 'disconnected'}`;
     
     // Update button states
-    elements.startExperiment.disabled = !status.unity;
+    elements.startLeftExperiment.disabled = !status.unity;
+    elements.startRightExperiment.disabled = !status.unity;
     elements.stopExperiment.disabled = !status.unity;
     elements.testMotor.disabled = !status.arduino;
 }
