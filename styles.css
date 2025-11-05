@@ -2,14 +2,18 @@
  * AIMLAB VR Data Collector - Stylesheet
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 04 November 2025
- * Version: v2.0
+ * Date: 05 November 2025
+ * Version: v3.5
  * 
  * Description:
  * Minimal stylesheet for VR data collection interface.
  * Features NYU purple accents on solid white background.
  * 
  * Changelog:
+ * v3.5 - 05 November 2025 - Added splash screen
+ *        - Fade-in animation for AIMLAB logo on startup
+ *        - Smooth transition from black to main UI
+ *        - Logo fade in/out with timing
  * v2.0 - 04 November 2025 - Minimal data collection design
  *        - Simplified layout for data collection
  *        - Added debug console styling
@@ -17,6 +21,78 @@
  * v1.0 - 04 November 2025 - Initial NYU purple theme
  *        - Full featured UI components
  */
+
+/* ==================== Splash Screen ==================== */
+.splash-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #000000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 1;
+    transition: opacity 0.8s ease-out;
+}
+
+.splash-screen.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.splash-text {
+    text-align: center;
+    opacity: 0;
+    animation: logoFadeIn 2s ease-in-out forwards;
+    animation-delay: 0.3s;
+}
+
+.splash-title {
+    color: #FFFFFF;
+    font-size: 48px;
+    font-weight: 300;
+    margin: 0;
+    padding: 0;
+    letter-spacing: 2px;
+    line-height: 1.2;
+}
+
+.splash-subtitle {
+    color: #FFFFFF;
+    font-size: 32px;
+    font-weight: 200;
+    margin-top: 20px;
+    padding: 0;
+    letter-spacing: 3px;
+    opacity: 0.9;
+}
+
+@keyframes logoFadeIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.9) translateY(-10px);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.main-content {
+    opacity: 0;
+    transition: opacity 0.8s ease-in;
+}
+
+.main-content.visible {
+    opacity: 1;
+}
 
 /* ==================== CSS Variables ==================== */
 :root {

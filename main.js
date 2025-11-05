@@ -3,7 +3,7 @@
   * 
   * Author: Pi Ko (pi.ko@nyu.edu)
   * Date: 05 November 2025
-  * Version: v3.4
+  * Version: v3.5
   * 
   * Description:
   * Main Electron process for AIMLAB VR Data Collector.
@@ -11,6 +11,10 @@
   * Arduino serial communication, CSV file recording, and application lifecycle.
   * 
   * Changelog:
+  * v3.5 - 05 November 2025 - Added experiment ID passing to Unity
+  *        - IPC handlers now accept experimentId parameter
+  *        - Commands sent as CMD:START_LEFT_EXPERIMENT:experimentId
+  *        - Unity receives the experiment ID for internal use
   * v3.4 - 05 November 2025 - Added left/right hand experiment support
   *        - Added start-left-experiment and start-right-experiment IPC handlers
   *        - Sends CMD:START_LEFT_EXPERIMENT or CMD:START_RIGHT_EXPERIMENT to Unity
@@ -368,22 +372,43 @@ ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
     dataServer.on('message', (msg, rinfo) => {
       const message = msg.toString();
 
-      // Add this to your UDP message handler
-if (message.startsWith('VIBRATE:')) {
-  const motorId = message.split(':')[1];
-  // Forward to Arduino
-  if (arduinoPort) {
-      arduinoPort.write(`1\n`); // Send motor command
-  }
-} else if (message.startsWith('VIBRATE_CUSTOM:')) {
-  const parts = message.split(':');
-  const duration = parts[1];
-  const intensity = parts[2];
-  // Send custom command to Arduino
-  if (arduinoPort) {
-      arduinoPort.write(`C:${duration}:${intensity}\n`);
-  }
-}
+      // Handle vibration commands from Unity
+      if (message.startsWith('VIBRATE:')) {
+        const motorId = message.split(':')[1] || '1';
+        
+        // Check if serialPort exists and is open
+        if (serialPort && serialPort.isOpen) {
+          serialPort.write('1\n', (err) => {
+            if (err) {
+              sendLog(`Error sending vibration to Arduino: ${err.message}`, 'error');
+            } else {
+              sendLog('Vibration command sent to Arduino', 'success');
+            }
+          });
+        } else {
+          sendLog('Motor not connected - cannot send vibration', 'warning');
+        }
+        return; // Don't process as other message type
+      } 
+      else if (message.startsWith('VIBRATE_CUSTOM:')) {
+        const parts = message.split(':');
+        const duration = parts[1];
+        const intensity = parts[2];
+        
+        // Check if serialPort exists and is open
+        if (serialPort && serialPort.isOpen) {
+          serialPort.write(`C:${duration}:${intensity}\n`, (err) => {
+            if (err) {
+              sendLog(`Error sending custom vibration to Arduino: ${err.message}`, 'error');
+            } else {
+              sendLog(`Custom vibration sent: ${duration}ms at ${intensity}%`, 'success');
+            }
+          });
+        } else {
+          sendLog('Motor not connected - cannot send vibration', 'warning');
+        }
+        return; // Don't process as other message type
+      }
       
       // Handle different message types
       if (message.startsWith(MSG_HANDSHAKE)) {
@@ -1077,8 +1102,9 @@ ipcMain.handle('test-motor', async () => {
  
  /**
   * Start left hand experiment in Unity
+  * @param {string} experimentId - Experiment ID to send to Unity
   */
- ipcMain.handle('start-left-experiment', async () => {
+ ipcMain.handle('start-left-experiment', async (event, experimentId) => {
    try {
      if (!unityConnected) {
        throw new Error('Unity not connected');
@@ -1088,8 +1114,8 @@ ipcMain.handle('test-motor', async () => {
        throw new Error('Unity endpoint not established');
      }
      
-     // Send START_LEFT_EXPERIMENT command to Unity
-     const commandMsg = `${MSG_COMMAND}:${CMD_START_LEFT_EXPERIMENT}`;
+     // Send START_LEFT_EXPERIMENT command with experiment ID to Unity
+     const commandMsg = `${MSG_COMMAND}:${CMD_START_LEFT_EXPERIMENT}:${experimentId}`;
      dataServer.send(
        Buffer.from(commandMsg),
        UNITY_DATA_PORT,
@@ -1098,7 +1124,7 @@ ipcMain.handle('test-motor', async () => {
          if (err) {
            sendLog(`Failed to send start left command: ${err.message}`, 'error');
          } else {
-           sendLog('Start Left Hand Experiment command sent to Unity', 'success');
+           sendLog(`Start Left Hand Experiment command sent to Unity with ID: ${experimentId}`, 'success');
          }
        }
      );
@@ -1113,8 +1139,9 @@ ipcMain.handle('test-motor', async () => {
  
  /**
   * Start right hand experiment in Unity
+  * @param {string} experimentId - Experiment ID to send to Unity
   */
- ipcMain.handle('start-right-experiment', async () => {
+ ipcMain.handle('start-right-experiment', async (event, experimentId) => {
    try {
      if (!unityConnected) {
        throw new Error('Unity not connected');
@@ -1124,8 +1151,8 @@ ipcMain.handle('test-motor', async () => {
        throw new Error('Unity endpoint not established');
      }
      
-     // Send START_RIGHT_EXPERIMENT command to Unity
-     const commandMsg = `${MSG_COMMAND}:${CMD_START_RIGHT_EXPERIMENT}`;
+     // Send START_RIGHT_EXPERIMENT command with experiment ID to Unity
+     const commandMsg = `${MSG_COMMAND}:${CMD_START_RIGHT_EXPERIMENT}:${experimentId}`;
      dataServer.send(
        Buffer.from(commandMsg),
        UNITY_DATA_PORT,
@@ -1134,7 +1161,7 @@ ipcMain.handle('test-motor', async () => {
          if (err) {
            sendLog(`Failed to send start right command: ${err.message}`, 'error');
          } else {
-           sendLog('Start Right Hand Experiment command sent to Unity', 'success');
+           sendLog(`Start Right Hand Experiment command sent to Unity with ID: ${experimentId}`, 'success');
          }
        }
      );

@@ -3,13 +3,16 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.4
+ * Version: v3.5
  * 
  * Description:
  * Preload script for Electron contextBridge to safely expose IPC functionality
  * for Unity UDP data streaming and Arduino serial communication.
  * 
  * Changelog:
+ * v3.5 - 05 November 2025 - Pass experiment ID to Unity
+ *        - Updated startLeftExperiment and startRightExperiment to accept experimentId
+ *        - Experiment ID sent to Unity for internal tracking
  * v3.4 - 05 November 2025 - Added left/right hand experiment support
  *        - Added startLeftExperiment and startRightExperiment functions
  *        - Separate commands for left and right hand experiments
@@ -105,15 +108,17 @@ contextBridge.exposeInMainWorld('api', {
   // Experiment Control
   /**
    * Start left hand experiment in Unity
+   * @param {string} experimentId - Experiment ID to send to Unity
    * @returns {Promise<Object>} Result with success status
    */
-  startLeftExperiment: () => ipcRenderer.invoke('start-left-experiment'),
+  startLeftExperiment: (experimentId) => ipcRenderer.invoke('start-left-experiment', experimentId),
   
   /**
    * Start right hand experiment in Unity
+   * @param {string} experimentId - Experiment ID to send to Unity
    * @returns {Promise<Object>} Result with success status
    */
-  startRightExperiment: () => ipcRenderer.invoke('start-right-experiment'),
+  startRightExperiment: (experimentId) => ipcRenderer.invoke('start-right-experiment', experimentId),
   
   /**
    * Stop experiment in Unity

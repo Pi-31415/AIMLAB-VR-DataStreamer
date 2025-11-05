@@ -3,7 +3,7 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.4
+ * Version: v3.5
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
@@ -11,6 +11,10 @@
  * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v3.5 - 05 November 2025 - Pass experiment ID to Unity
+ *        - Added validation that experiment ID must end with a number
+ *        - Experiment ID now sent to Unity in command
+ *        - Unity receives ID for internal experiment tracking
  * v3.4 - 05 November 2025 - Added left/right hand experiment support
  *        - Split Start Experiment into two separate buttons
  *        - Filenames prefixed with LEFT_ or RIGHT_
@@ -75,10 +79,29 @@ const elements = {
  * Initialize application when DOM is loaded
  */
 document.addEventListener('DOMContentLoaded', () => {
-    setupEventListeners();
-    addLog('AIMLAB VR Data Collector initialized', 'success');
-    addLog('Ready to connect to Unity and Vibration Motor', 'info');
-    addLog('Discovery port: 45001 | Data port: 45102', 'info');
+    // Show splash screen for 3 seconds (0.3s delay + 2s logo animation + 0.7s hold)
+    setTimeout(() => {
+        // Start fade out of splash screen
+        const splashScreen = document.getElementById('splashScreen');
+        const mainContent = document.getElementById('mainContent');
+        
+        splashScreen.classList.add('fade-out');
+        
+        // After splash fades out, show main content and remove splash
+        setTimeout(() => {
+            mainContent.classList.add('visible');
+            // Remove splash screen from DOM after animation completes
+            setTimeout(() => {
+                splashScreen.remove();
+            }, 800);
+        }, 100);
+        
+        // Initialize app after splash starts fading
+        setupEventListeners();
+        addLog('AIMLAB VR Data Collector initialized', 'success');
+        addLog('Ready to connect to Unity and Vibration Motor', 'info');
+        addLog('Discovery port: 45001 | Data port: 45102', 'info');
+    }, 3000);
 });
 
 // ==================== Event Listeners Setup ====================
@@ -171,6 +194,13 @@ async function startExperiment(hand = 'right') {
         return;
     }
     
+    // Validate that experiment ID ends with a number
+    if (!/\d$/.test(experimentId)) {
+        addLog('Experiment ID must end with a number', 'error');
+        elements.experimentId.focus();
+        return;
+    }
+    
     if (!unityConnected) {
         addLog('Unity must be connected to start experiment', 'error');
         return;
@@ -200,17 +230,17 @@ async function startExperiment(hand = 'right') {
     elements.recordingStatus.classList.add('active');
     addLog(`Recording started: ${recordResult.filename}.csv`, 'success');
     
-    // Send appropriate command based on hand
+    // Send appropriate command based on hand WITH experiment ID
     const command = hand === 'left' ? 'startLeftExperiment' : 'startRightExperiment';
-    addLog(`Sending Start ${hand.charAt(0).toUpperCase() + hand.slice(1)} Hand Experiment command to Unity...`, 'info');
-    const result = await window.api[command]();
+    addLog(`Sending Start ${hand.charAt(0).toUpperCase() + hand.slice(1)} Hand Experiment command to Unity with ID: ${experimentId}...`, 'info');
+    const result = await window.api[command](experimentId);  // Pass the experiment ID
     
     if (result.success) {
         elements.startLeftExperiment.disabled = true;
         elements.startRightExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
         elements.experimentId.disabled = true;
-        addLog(`${hand.charAt(0).toUpperCase() + hand.slice(1)} hand experiment started in Unity`, 'success');
+        addLog(`${hand.charAt(0).toUpperCase() + hand.slice(1)} hand experiment started in Unity with ID: ${experimentId}`, 'success');
         addLog('Unity should now be sending VR data', 'info');
     } else {
         addLog(`Failed to start ${hand} hand experiment: ${result.error}`, 'error');
