@@ -2,14 +2,19 @@
  * AIMLAB VR Streamer - Preload Script
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 05 November 2025
- * Version: v3.7
+ * Date: 19 November 2025
+ * Version: v3.9
  * 
  * Description:
  * Preload script for Electron contextBridge to safely expose IPC functionality
  * for Unity UDP data streaming and Arduino serial communication.
  * 
  * Changelog:
+ * v3.9 - 19 November 2025 - Added mid-experiment save API
+ *        - Added saveMidExperiment method for mid-experiment data saving
+ * v3.8 - 19 November 2025 - Added ADB sync API with path configuration
+ *        - Added syncExperimentData method for ADB pull operations
+ *        - Added getAdbPath and setAdbPath methods for ADB path management
  * v3.7 - 05 November 2025 - Added chunked TSV transfer support
  *        - Added onTSVProgress listener for transfer progress updates
  *        - Enhanced onTSVSaved with transfer time and file size
@@ -144,6 +149,30 @@ contextBridge.exposeInMainWorld('api', {
    * @returns {Promise<Object>} Result with success status and path
    */
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
+
+  /**
+   * Sync experiment data from headset to ExperimentalData via ADB
+   * @returns {Promise<Object>} Result with success status and path
+   */
+  syncExperimentData: () => ipcRenderer.invoke('sync-experiment-data'),
+  
+  /**
+   * Get current ADB path from configuration
+   * @returns {Promise<string>} Current ADB executable path
+   */
+  getAdbPath: () => ipcRenderer.invoke("get-adb-path"),
+  
+  /**
+   * Set ADB path by opening file dialog
+   * @returns {Promise<Object>} Result with success status and ADB path
+   */
+  setAdbPath: () => ipcRenderer.invoke("set-adb-path"),
+  
+  /**
+   * Save data mid-experiment without stopping
+   * @returns {Promise<Object>} Result with success status
+   */
+  saveMidExperiment: () => ipcRenderer.invoke('save-mid-experiment'),
   
   /**
    * Check if a file with the given experiment ID already exists

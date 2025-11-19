@@ -3,13 +3,25 @@
 AIMLAB VR Data Collector - User Interface
 
 Author: Pi Ko (pi.ko@nyu.edu)
-Date: 05 November 2025
-Version: v3.7
+Date: 19 November 2025
+Version: v3.9
 
 Description:
 Minimal UI for VR data collection from Unity and Arduino motor control.
 
 Changelog:
+v3.9 - 19 November 2025 - Added mid-experiment save with auto-sync
+       - Added "Save Data Mid Experiment" button
+       - Saves TSV data without stopping experiment
+       - Auto-syncs data 4 seconds after mid-save
+       - Auto-syncs data 4 seconds after stop experiment
+v3.8 - 19 November 2025 - Added ADB sync functionality with path configuration
+       - Added "Sync Experiment Data to PC" button
+       - Pulls data from Android headset via ADB
+       - Syncs to ExperimentalData folder
+       - Added "Set ADB Path" button for custom ADB path selection
+       - ADB path stored in userData/adb-config.json
+       - Default path: Unity SDK platform-tools/adb.exe
 v3.7 - 05 November 2025 - Chunked TSV file transfer
        - Added chunked TSV transfer support (header, chunks, complete)
        - Handles large files split into 8KB chunks with Base64 encoding
@@ -77,7 +89,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
         
         <!-- Version Info -->
         <div class="version-info">
-            Version 3.7.0 | Ports: Unity 45000/45101, Electron 45001/45102
+            Version 3.9.0 | Ports: Unity 45000/45101, Electron 45001/45102
         </div>
 
         <!-- Control Panel -->
@@ -98,6 +110,9 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div class="control-group">
                 <h3>Experiment Data</h3>
                 <button id="openDataFolder" class="btn-primary">Open Experiment Data Folder</button>
+                <button id="saveMidExperiment" class="btn-warning" disabled>Save Data Mid Experiment</button>
+                <button id="syncExperimentData" class="btn-secondary">Sync Experiment Data to PC</button>
+                <button id="setAdbPath" class="btn-secondary">Set ADB Path</button>
             </div>
 
             <!-- Vibration Motor Controls -->

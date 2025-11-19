@@ -2,8 +2,8 @@
  * AIMLAB VR Data Collector - Renderer Process
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 05 November 2025
- * Version: v3.7
+ * Date: 19 November 2025
+ * Version: v3.9
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
@@ -11,6 +11,18 @@
  * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v3.9 - 19 November 2025 - Added mid-experiment save feature
+ *        - Added saveMidExperiment function and button
+ *        - Button enabled during experiment, disabled when stopped
+ *        - Auto-syncs data 4 seconds after mid-save
+ *        - Auto-syncs data 4 seconds after stop experiment
+ *        - Provides visual feedback for save operations
+ * v3.8 - 19 November 2025 - Added ADB sync button and handler with path configuration
+ *        - Added syncExperimentData function
+ *        - Button triggers ADB pull from Android headset
+ *        - Displays sync status in log output
+ *        - Added setAdbPath function and button
+ *        - User can configure ADB path via file dialog
  * v3.7 - 05 November 2025 - Chunked TSV transfer support
  *        - Added TSV progress tracking and display
  *        - Added success notification with transfer details
@@ -69,6 +81,9 @@ const elements = {
     testMotor: document.getElementById('testMotor'),
     refreshArduino: document.getElementById('refreshArduino'),
     openDataFolder: document.getElementById('openDataFolder'),
+    saveMidExperiment: document.getElementById('saveMidExperiment'),
+    syncExperimentData: document.getElementById('syncExperimentData'),
+    setAdbPath: document.getElementById('setAdbPath'),
     clearLog: document.getElementById('clearLog'),
     
     // Inputs
@@ -135,6 +150,9 @@ function setupEventListeners() {
     
     // Data Folder
     elements.openDataFolder.addEventListener('click', openDataFolder);
+    elements.saveMidExperiment.addEventListener('click', saveMidExperiment);
+    elements.syncExperimentData.addEventListener('click', syncExperimentData);
+    elements.setAdbPath.addEventListener('click', setAdbPath);
     
     // Utility
     elements.clearLog.addEventListener('click', clearLog);
@@ -296,6 +314,7 @@ async function startExperiment(hand = 'right') {
         elements.startLeftExperiment.disabled = true;
         elements.startRightExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
+        elements.saveMidExperiment.disabled = false; // Enable mid-save button
         elements.experimentId.disabled = true;
         
         isRecording = true;
@@ -320,6 +339,17 @@ async function stopExperiment() {
     if (result.success) {
         addLog('Experiment stopped in Unity', 'success');
         addLog('Unity will save TSV file and send it to Electron', 'info');
+        
+        // Auto-sync after 4 seconds
+        setTimeout(async () => {
+            addLog('Auto-syncing experiment data...', 'info');
+            const syncResult = await window.api.syncExperimentData();
+            if (syncResult.success) {
+                addLog(`Data synced: ${syncResult.path}`, 'success');
+            } else {
+                addLog(`Sync failed: ${syncResult.error}`, 'error');
+            }
+        }, 4000);
     } else {
         addLog(`Failed to stop experiment: ${result.error}`, 'error');
     }
@@ -329,6 +359,7 @@ async function stopExperiment() {
     elements.startLeftExperiment.disabled = false;
     elements.startRightExperiment.disabled = false;
     elements.stopExperiment.disabled = true;
+    elements.saveMidExperiment.disabled = true; // Disable mid-save button
     elements.experimentId.disabled = false;
     elements.recordingStatus.textContent = '';
     elements.recordingStatus.classList.remove('active');
@@ -394,6 +425,71 @@ async function openDataFolder() {
         addLog(`Opened folder: ${result.path}`, 'success');
     } else {
         addLog(`Failed to open folder: ${result.error}`, 'error');
+    }
+}
+
+/**
+ * Sync experiment data from headset to ExperimentalData via ADB
+ */
+async function syncExperimentData() {
+    addLog('Syncing experiment data from headset via ADB...', 'info');
+    const result = await window.api.syncExperimentData();
+
+    if (result.success) {
+        addLog(`Experiment data synced to: ${result.path}`, 'success');
+    } else {
+        addLog(`Experiment data sync failed: ${result.error}`, 'error');
+    }
+}
+
+/**
+ * Set ADB path by opening file dialog
+ */
+async function setAdbPath() {
+    addLog("Selecting adb.exe...", "info");
+
+    const result = await window.api.setAdbPath();
+
+    if (result.success) {
+        addLog(`ADB path saved: ${result.adbPath}`, "success");
+    } else {
+        addLog(`ADB path not changed: ${result.error}`, "error");
+    }
+}
+
+/**
+ * Save data mid-experiment without stopping
+ */
+async function saveMidExperiment() {
+    if (!unityConnected) {
+        addLog('Unity not connected', 'error');
+        return;
+    }
+    
+    addLog('Requesting mid-experiment save...', 'info');
+    
+    try {
+        // Send save command to Unity
+        const result = await window.api.saveMidExperiment();
+        
+        if (result.success) {
+            addLog('Mid-experiment save initiated', 'success');
+            
+            // Wait 4 seconds then sync
+            setTimeout(async () => {
+                addLog('Auto-syncing experiment data...', 'info');
+                const syncResult = await window.api.syncExperimentData();
+                if (syncResult.success) {
+                    addLog(`Data synced: ${syncResult.path}`, 'success');
+                } else {
+                    addLog(`Sync failed: ${syncResult.error}`, 'error');
+                }
+            }, 4000);
+        } else {
+            addLog(`Mid-save failed: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        addLog(`Mid-save error: ${error.message}`, 'error');
     }
 }
 

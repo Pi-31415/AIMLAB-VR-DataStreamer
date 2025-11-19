@@ -2,8 +2,8 @@
   * AIMLAB VR Streamer - Main Process
   * 
   * Author: Pi Ko (pi.ko@nyu.edu)
-  * Date: 05 November 2025
-  * Version: v3.7
+  * Date: 19 November 2025
+  * Version: v3.9
   * 
   * Description:
   * Main Electron process for AIMLAB VR Data Collector.
@@ -11,6 +11,21 @@
   * Arduino serial communication, TSV file reception, and application lifecycle.
   * 
  * Changelog:
+ * v3.9 - 19 November 2025 - Added mid-experiment save with auto-sync
+ *        - Added save-mid-experiment IPC handler
+ *        - Sends SAVE_MID_EXPERIMENT command to Unity
+ *        - Handles MID_SAVE_COMPLETE confirmation from Unity
+ *        - Auto-syncs experiment data after mid-save (4 second delay)
+ *        - Auto-syncs experiment data after stop experiment (4 second delay)
+ * v3.8 - 19 November 2025 - Added ADB sync functionality with path configuration
+ *        - Added sync-experiment-data IPC handler
+ *        - Pulls data from Android headset via ADB
+ *        - Syncs /sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/ to ExperimentalData
+ *        - Uses execFile to run adb commands safely
+ *        - Added ADB path configuration (stored in userData/adb-config.json)
+ *        - Default ADB path: Unity SDK platform-tools/adb.exe
+ *        - Added get-adb-path and set-adb-path IPC handlers
+ *        - User can select custom ADB path via file dialog
  * v3.7 - 05 November 2025 - Chunked TSV file transfer implementation
  *        - Added chunked TSV transfer support (TSV_HEADER, TSV_CHUNK, TSV_COMPLETE)
  *        - Handles large files split into 8KB chunks with Base64 encoding
@@ -89,6 +104,39 @@ const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 const fs = require('fs');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+const { execFile } = require('child_process');   // For running adb
+
+// ADB Configuration
+const configPath = path.join(app.getPath("userData"), "adb-config.json");
+
+/**
+ * Load ADB path from configuration file
+ * @returns {string} ADB executable path
+ */
+function loadAdbPath() {
+  try {
+    if (fs.existsSync(configPath)) {
+      const data = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      return data.adbPath;
+    }
+  } catch (_) {}
+  
+  // Default fallback (Unity ADB path)
+  return "C:\\Program Files\\Unity\\Hub\\Editor\\2021.3.22f1\\Editor\\Data\\PlaybackEngines\\AndroidPlayer\\SDK\\platform-tools\\adb.exe";
+}
+
+/**
+ * Save ADB path to configuration file
+ * @param {string} p - ADB executable path
+ */
+function saveAdbPath(p) {
+  fs.writeFileSync(configPath, JSON.stringify({ adbPath: p }, null, 2));
+}
+
+// Experiment Data Path Constants - Define ONCE for consistency
+const EXPERIMENT_DATA_PATH = path.join(app.getPath('desktop'), 'ExperimentData');
+const LEFT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Left_Hand');
+const RIGHT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Right_Hand');
 
 // Global Variables
 let mainWindow = null;
@@ -129,6 +177,7 @@ const MSG_COMMAND = "CMD";
  const CMD_START_LEFT_EXPERIMENT = "START_LEFT_EXPERIMENT";
  const CMD_START_RIGHT_EXPERIMENT = "START_RIGHT_EXPERIMENT";
  const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
+ const CMD_SAVE_MID_EXPERIMENT = "SAVE_MID_EXPERIMENT";
 
 /**
  * Creates the main application window
@@ -402,6 +451,18 @@ ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
       // Legacy support: Check if this is a single TSV file transfer (non-chunked)
       if (message.startsWith('TSV_FILE|')) {
         handleTSVFileReceived(message);
+        return; // Don't process as other message type
+      }
+      
+      // Handle mid-save completion confirmation from Unity
+      if (message.includes('MID_SAVE_COMPLETE')) {
+        sendLog('Mid-experiment save completed in Unity', 'success');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('log', {
+            message: 'Mid-experiment save completed',
+            type: 'success'
+          });
+        }
         return; // Don't process as other message type
       }
       
@@ -1244,6 +1305,42 @@ ipcMain.handle('stop-experiment', async () => {
 });
 
 /**
+ * Save data mid-experiment without stopping
+ */
+ipcMain.handle('save-mid-experiment', async () => {
+  try {
+    if (!unityConnected) {
+      throw new Error('Unity not connected');
+    }
+    
+    if (!unityEndpoint || !dataServer) {
+      throw new Error('Unity endpoint not established');
+    }
+    
+    // Send SAVE_MID_EXPERIMENT command to Unity
+    const commandMsg = `${MSG_COMMAND}:${CMD_SAVE_MID_EXPERIMENT}`;
+    dataServer.send(
+      Buffer.from(commandMsg),
+      UNITY_DATA_PORT,
+      unityEndpoint.address,
+      (err) => {
+        if (err) {
+          sendLog(`Failed to send mid-save command: ${err.message}`, 'error');
+        } else {
+          sendLog('Save Mid Experiment command sent to Unity', 'success');
+        }
+      }
+    );
+    
+    return { success: true };
+    
+  } catch (error) {
+    sendLog(`Failed to send mid-save command: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+/**
  * Disconnect from Arduino
  */
 ipcMain.handle('disconnect-arduino', async () => {
@@ -1274,32 +1371,130 @@ ipcMain.handle('disconnect-arduino', async () => {
  */
 ipcMain.handle('open-data-folder', async () => {
   try {
-    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-    const dataDir = path.join(appPath, 'ExperimentalData');
-    
     // Create directory if it doesn't exist
-    if (!fs.existsSync(dataDir)) {
+    if (!fs.existsSync(EXPERIMENT_DATA_PATH)) {
       try {
-        fs.mkdirSync(dataDir, { recursive: true });
-        sendLog(`Created ExperimentalData folder: ${dataDir}`, 'success');
+        fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
+        sendLog(`Created ExperimentData folder: ${EXPERIMENT_DATA_PATH}`, 'success');
       } catch (mkdirErr) {
         throw new Error(`Cannot create data directory: ${mkdirErr.message}`);
       }
     }
     
+    // Create subdirectories if they don't exist
+    if (!fs.existsSync(LEFT_HAND_PATH)) {
+      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
+    }
+    if (!fs.existsSync(RIGHT_HAND_PATH)) {
+      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
+    }
+    
     // Open folder in Windows Explorer (or default file manager on other OS)
-    const openResult = await shell.openPath(dataDir);
+    const openResult = await shell.openPath(EXPERIMENT_DATA_PATH);
     
     if (openResult) {
       // openPath returns empty string on success, error message on failure
       throw new Error(`Failed to open folder: ${openResult}`);
     }
     
-    sendLog(`Opened folder: ${dataDir}`, 'success');
-    return { success: true, path: dataDir };
+    sendLog(`Opened folder: ${EXPERIMENT_DATA_PATH}`, 'success');
+    return { success: true, path: EXPERIMENT_DATA_PATH };
     
   } catch (error) {
     sendLog(`Failed to open data folder: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Get current ADB path from configuration
+ */
+ipcMain.handle("get-adb-path", () => {
+  return loadAdbPath();
+});
+
+/**
+ * Set ADB path by opening file dialog
+ */
+ipcMain.handle("set-adb-path", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Select adb.exe",
+    filters: [
+      { name: "ADB Executable", extensions: ["exe"] }
+    ],
+    properties: ["openFile"]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { success: false, error: "No file selected" };
+  }
+
+  const selected = result.filePaths[0];
+  saveAdbPath(selected);
+  sendLog(`ADB path saved: ${selected}`, 'success');
+
+  return { success: true, adbPath: selected };
+});
+
+/**
+ * Sync experiment data from headset (ADB pull) into ExperimentalData
+ * Copies: /sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/.
+ */
+ipcMain.handle('sync-experiment-data', async () => {
+  try {
+    const adbPath = loadAdbPath();   // Use stored ADB path
+
+    // Ensure ExperimentData directory exists (same logic as open-data-folder)
+    if (!fs.existsSync(EXPERIMENT_DATA_PATH)) {
+      try {
+        fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
+        sendLog(`Created ExperimentData folder: ${EXPERIMENT_DATA_PATH}`, 'success');
+      } catch (mkdirErr) {
+        throw new Error(`Cannot create data directory: ${mkdirErr.message}`);
+      }
+    }
+    
+    // Create subdirectories if they don't exist
+    if (!fs.existsSync(LEFT_HAND_PATH)) {
+      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
+    }
+    if (!fs.existsSync(RIGHT_HAND_PATH)) {
+      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
+    }
+
+    const sourcePath = '/sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/.';
+    const adbArgs = ['-d', 'pull', sourcePath, EXPERIMENT_DATA_PATH];
+
+    sendLog(`Starting ADB sync: ${adbPath} ${adbArgs.join(' ')}`, 'info');
+
+    return await new Promise((resolve) => {
+      execFile(adbPath, adbArgs, { windowsHide: true }, (error, stdout, stderr) => {
+        if (error) {
+          sendLog(`ADB sync failed: ${error.message}`, 'error');
+          if (stderr) {
+            sendLog(`ADB stderr: ${stderr}`, 'error');
+          }
+          return resolve({
+            success: false,
+            error: error.message,
+            stderr: stderr || ''
+          });
+        }
+
+        if (stdout) {
+          sendLog(`ADB output: ${stdout}`, 'info');
+        }
+
+        sendLog(`ADB sync completed to: ${EXPERIMENT_DATA_PATH}`, 'success');
+        resolve({
+          success: true,
+          path: EXPERIMENT_DATA_PATH,
+          stdout: stdout || ''
+        });
+      });
+    });
+  } catch (error) {
+    sendLog(`Sync experiment data error: ${error.message}`, 'error');
     return { success: false, error: error.message };
   }
 });
@@ -1493,12 +1688,10 @@ function handleTSVComplete(message) {
         subFolder = 'Right_Hand';
       }
       
-      // Save to experimentData folder
-      const basePath = app.isPackaged 
-        ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
-        : path.join(__dirname, 'experimentData');
-      
-      const folderPath = subFolder ? path.join(basePath, subFolder) : basePath;
+      // Save to ExperimentData folder (use consistent path)
+      const folderPath = subFolder === 'Left_Hand' ? LEFT_HAND_PATH 
+        : subFolder === 'Right_Hand' ? RIGHT_HAND_PATH 
+        : EXPERIMENT_DATA_PATH;
       
       // Create directory if it doesn't exist
       if (!fs.existsSync(folderPath)) {
@@ -1558,12 +1751,10 @@ function handleTSVFileReceived(message) {
         subFolder = 'Right_Hand';
       }
       
-      // Save to experimentData folder in Documents
-      const basePath = app.isPackaged 
-        ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
-        : path.join(__dirname, 'experimentData');
-      
-      const folderPath = subFolder ? path.join(basePath, subFolder) : basePath;
+      // Save to ExperimentData folder (use consistent path)
+      const folderPath = subFolder === 'Left_Hand' ? LEFT_HAND_PATH 
+        : subFolder === 'Right_Hand' ? RIGHT_HAND_PATH 
+        : EXPERIMENT_DATA_PATH;
       
       // Create directory if it doesn't exist
       if (!fs.existsSync(folderPath)) {
@@ -1596,19 +1787,20 @@ function handleTSVFileReceived(message) {
  */
 ipcMain.handle('check-experiment-files', async (event, experimentId) => {
   try {
-    const basePath = app.isPackaged 
-      ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
-      : path.join(__dirname, 'experimentData');
-    
-    const leftPath = path.join(basePath, 'Left_Hand');
-    const rightPath = path.join(basePath, 'Right_Hand');
+    // Create directories if they don't exist
+    if (!fs.existsSync(LEFT_HAND_PATH)) {
+      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
+    }
+    if (!fs.existsSync(RIGHT_HAND_PATH)) {
+      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
+    }
     
     let existingFiles = [];
     
     // Check Left_Hand folder
-    if (fs.existsSync(leftPath)) {
+    if (fs.existsSync(LEFT_HAND_PATH)) {
       try {
-        const leftFiles = fs.readdirSync(leftPath);
+        const leftFiles = fs.readdirSync(LEFT_HAND_PATH);
         const matchingLeft = leftFiles.filter(file => 
           file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
         );
@@ -1619,9 +1811,9 @@ ipcMain.handle('check-experiment-files', async (event, experimentId) => {
     }
     
     // Check Right_Hand folder
-    if (fs.existsSync(rightPath)) {
+    if (fs.existsSync(RIGHT_HAND_PATH)) {
       try {
-        const rightFiles = fs.readdirSync(rightPath);
+        const rightFiles = fs.readdirSync(RIGHT_HAND_PATH);
         const matchingRight = rightFiles.filter(file => 
           file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
         );
