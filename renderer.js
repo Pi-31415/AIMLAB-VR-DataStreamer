@@ -71,19 +71,26 @@ const elements = {
     unityStatus: document.getElementById('unityStatus'),
     arduinoStatus: document.getElementById('arduinoStatus'),
     
-    // Buttons
+    // Unity controls
     connectUnity: document.getElementById('connectUnity'),
     refreshUnity: document.getElementById('refreshUnity'),
     startLeftExperiment: document.getElementById('startLeftExperiment'),
     startRightExperiment: document.getElementById('startRightExperiment'),
     stopExperiment: document.getElementById('stopExperiment'),
+    togglePegBoardTransparency: document.getElementById('togglePegBoardTransparency'),
+    
+    // Arduino controls
     connectArduino: document.getElementById('connectArduino'),
     testMotor: document.getElementById('testMotor'),
     refreshArduino: document.getElementById('refreshArduino'),
+    
+    // Experiment data controls
     openDataFolder: document.getElementById('openDataFolder'),
     saveMidExperiment: document.getElementById('saveMidExperiment'),
     syncExperimentData: document.getElementById('syncExperimentData'),
     setAdbPath: document.getElementById('setAdbPath'),
+    
+    // Utility buttons
     clearLog: document.getElementById('clearLog'),
     
     // Inputs
@@ -142,6 +149,7 @@ function setupEventListeners() {
     elements.startLeftExperiment.addEventListener('click', () => startExperiment('left'));
     elements.startRightExperiment.addEventListener('click', () => startExperiment('right'));
     elements.stopExperiment.addEventListener('click', stopExperiment);
+    elements.togglePegBoardTransparency.addEventListener('click', togglePegBoardTransparency);
     
     // Arduino Controls
     elements.connectArduino.addEventListener('click', connectToArduino);
@@ -490,6 +498,29 @@ async function saveMidExperiment() {
         }
     } catch (error) {
         addLog(`Mid-save error: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Toggle peg board transparency in Unity
+ */
+async function togglePegBoardTransparency() {
+    if (!unityConnected) {
+        addLog('Unity not connected', 'error');
+        return;
+    }
+    
+    addLog('Toggling peg board transparency...', 'info');
+    try {
+        const result = await window.api.togglePegBoardTransparency();
+        if (result && result.success) {
+            addLog('Peg board transparency toggled.', 'success');
+        } else {
+            const error = result && result.error ? result.error : 'Unknown error';
+            addLog(`Failed to toggle peg board transparency: ${error}`, 'error');
+        }
+    } catch (err) {
+        addLog(`Error toggling peg board transparency: ${err.message}`, 'error');
     }
 }
 

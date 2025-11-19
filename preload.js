@@ -138,6 +138,12 @@ contextBridge.exposeInMainWorld('api', {
   stopExperiment: () => ipcRenderer.invoke('stop-experiment'),
   
   /**
+   * Toggle peg board transparency in Unity
+   * @returns {Promise<Object>} Result with success status
+   */
+  togglePegBoardTransparency: () => ipcRenderer.invoke('toggle-pegboard-transparency'),
+  
+  /**
    * Listen for file rename notifications
    * @param {Function} callback - Callback function receiving rename data
    */

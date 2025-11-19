@@ -106,8 +106,16 @@ const fs = require('fs');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const { execFile } = require('child_process');   // For running adb
 
-// ADB Configuration
-const configPath = path.join(app.getPath("userData"), "adb-config.json");
+// Application Path References
+const APP_PATH = app.isPackaged ? path.dirname(app.getPath('exe')) : app.getAppPath();
+const EXPERIMENT_DATA_PATH = path.join(APP_PATH, 'ExperimentData');
+const LEFT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Left_Hand');
+const RIGHT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Right_Hand');
+const ADB_CONFIG_PATH = path.join(APP_PATH, 'adb-config.json');
+
+console.log('[AIMLAB] App path:', APP_PATH);
+console.log('[AIMLAB] Experiment data path:', EXPERIMENT_DATA_PATH);
+console.log('[AIMLAB] ADB config path:', ADB_CONFIG_PATH);
 
 /**
  * Load ADB path from configuration file
@@ -115,8 +123,8 @@ const configPath = path.join(app.getPath("userData"), "adb-config.json");
  */
 function loadAdbPath() {
   try {
-    if (fs.existsSync(configPath)) {
-      const data = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (fs.existsSync(ADB_CONFIG_PATH)) {
+      const data = JSON.parse(fs.readFileSync(ADB_CONFIG_PATH, "utf8"));
       return data.adbPath;
     }
   } catch (_) {}
@@ -130,13 +138,8 @@ function loadAdbPath() {
  * @param {string} p - ADB executable path
  */
 function saveAdbPath(p) {
-  fs.writeFileSync(configPath, JSON.stringify({ adbPath: p }, null, 2));
+  fs.writeFileSync(ADB_CONFIG_PATH, JSON.stringify({ adbPath: p }, null, 2));
 }
-
-// Experiment Data Path Constants - Define ONCE for consistency
-const EXPERIMENT_DATA_PATH = path.join(app.getPath('desktop'), 'ExperimentData');
-const LEFT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Left_Hand');
-const RIGHT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Right_Hand');
 
 // Global Variables
 let mainWindow = null;
@@ -173,11 +176,12 @@ const MSG_DATA = "DATA";
 const MSG_KEEPALIVE = "KEEPALIVE";
 const MSG_COMMAND = "CMD";
 
- // Command Constants
- const CMD_START_LEFT_EXPERIMENT = "START_LEFT_EXPERIMENT";
- const CMD_START_RIGHT_EXPERIMENT = "START_RIGHT_EXPERIMENT";
- const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
- const CMD_SAVE_MID_EXPERIMENT = "SAVE_MID_EXPERIMENT";
+// Command Constants
+const CMD_START_LEFT_EXPERIMENT = "START_LEFT_EXPERIMENT";
+const CMD_START_RIGHT_EXPERIMENT = "START_RIGHT_EXPERIMENT";
+const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
+const CMD_SAVE_MID_EXPERIMENT = "SAVE_MID_EXPERIMENT";
+const CMD_TOGGLE_PEGBOARD_TRANSPARENCY = "TOGGLE_PEGBOARD_TRANSPARENCY";
 
 /**
  * Creates the main application window
@@ -812,11 +816,7 @@ ipcMain.handle('disconnect-unity', async () => {
 ipcMain.handle('start-recording', async (event, filename) => {
   try {
     // Create data directory properly with extensive error handling
-    // Use app.getPath for proper path resolution in packaged app
-    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-    
-    // --- Use ExperimentalData folder ---
-    const dataDir = path.join(appPath, 'ExperimentalData');
+    const dataDir = EXPERIMENT_DATA_PATH;
     // --- END MODIFICATION ---
     
     sendLog(`Attempting to create/verify data directory: ${dataDir}`, 'debug');
@@ -974,10 +974,8 @@ ipcMain.handle('stop-recording', async () => {
     csvWriter = null;
     dataBuffer = [];
     
-    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-    
-    // --- Use ExperimentalData folder ---
-    const filePath = path.join(appPath, 'ExperimentalData', recordedFile + '.csv');
+    // --- Use ExperimentData folder ---
+    const filePath = path.join(EXPERIMENT_DATA_PATH, recordedFile + '.csv');
     // --- END MODIFICATION ---
     
     sendLog(`Recording stopped: ${recordedFile}.csv`, 'success');
@@ -1341,6 +1339,42 @@ ipcMain.handle('save-mid-experiment', async () => {
 });
 
 /**
+ * Toggle peg board transparency in Unity
+ */
+ipcMain.handle('toggle-pegboard-transparency', async () => {
+  try {
+    if (!unityConnected) {
+      throw new Error('Unity not connected');
+    }
+    
+    if (!unityEndpoint || !dataServer) {
+      throw new Error('Unity endpoint not established');
+    }
+    
+    // Send TOGGLE_PEGBOARD_TRANSPARENCY command to Unity
+    const commandMsg = `${MSG_COMMAND}:${CMD_TOGGLE_PEGBOARD_TRANSPARENCY}`;
+    dataServer.send(
+      Buffer.from(commandMsg),
+      UNITY_DATA_PORT,
+      unityEndpoint.address,
+      (err) => {
+        if (err) {
+          sendLog(`Failed to send peg board transparency toggle: ${err.message}`, 'error');
+        } else {
+          sendLog('Peg board transparency toggle command sent to Unity', 'success');
+        }
+      }
+    );
+    
+    return { success: true };
+    
+  } catch (error) {
+    sendLog(`Failed to toggle peg board transparency: ${error.message}`, 'error');
+    return { success: false, error: error.message };
+  }
+});
+
+/**
  * Disconnect from Arduino
  */
 ipcMain.handle('disconnect-arduino', async () => {
@@ -1505,12 +1539,9 @@ ipcMain.handle('sync-experiment-data', async () => {
  */
 ipcMain.handle('check-file-exists', async (event, experimentId) => {
   try {
-    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-    const dataDir = path.join(appPath, 'ExperimentalData');
-    
     // Clean filename
     const cleanFilename = experimentId.replace(/\.csv$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filepath = path.join(dataDir, `${cleanFilename}.csv`);
+    const filepath = path.join(EXPERIMENT_DATA_PATH, `${cleanFilename}.csv`);
     
     const exists = fs.existsSync(filepath);
     
