@@ -1,6 +1,6 @@
 {
   "name": "aimlab-vr-streamer",
-  "version": "3.5.0",
+  "version": "3.7.0",
   "description": "AIMLAB VR Data Collector - Unity UDP & Arduino Serial Communication",
   "main": "main.js",
   "scripts": {

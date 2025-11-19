@@ -3,13 +3,19 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.5
+ * Version: v3.7
  * 
  * Description:
  * Preload script for Electron contextBridge to safely expose IPC functionality
  * for Unity UDP data streaming and Arduino serial communication.
  * 
  * Changelog:
+ * v3.7 - 05 November 2025 - Added chunked TSV transfer support
+ *        - Added onTSVProgress listener for transfer progress updates
+ *        - Enhanced onTSVSaved with transfer time and file size
+ * v3.6 - 05 November 2025 - Added TSV file handling
+ *        - Added checkExperimentFiles to check for existing experiment files
+ *        - Added onTSVSaved listener for TSV file save notifications
  * v3.5 - 05 November 2025 - Pass experiment ID to Unity
  *        - Updated startLeftExperiment and startRightExperiment to accept experimentId
  *        - Experiment ID sent to Unity for internal tracking
@@ -144,6 +150,25 @@ contextBridge.exposeInMainWorld('api', {
    * @param {string} experimentId - Experiment ID to check
    * @returns {Promise<Object>} Result with exists boolean
    */
-  checkFileExists: (experimentId) => ipcRenderer.invoke('check-file-exists', experimentId)
+  checkFileExists: (experimentId) => ipcRenderer.invoke('check-file-exists', experimentId),
+  
+  /**
+   * Check for existing experiment files with given ID in Left_Hand and Right_Hand folders
+   * @param {string} experimentId - Experiment ID to check
+   * @returns {Promise<Array<string>>} Array of existing file paths
+   */
+  checkExperimentFiles: (experimentId) => ipcRenderer.invoke('check-experiment-files', experimentId),
+  
+  /**
+   * Listen for TSV file saved notifications
+   * @param {Function} callback - Callback function receiving TSV save data
+   */
+  onTSVSaved: (callback) => ipcRenderer.on('tsv-saved', callback),
+  
+  /**
+   * Listen for TSV transfer progress updates
+   * @param {Function} callback - Callback function receiving progress data
+   */
+  onTSVProgress: (callback) => ipcRenderer.on('tsv-progress', callback)
 });
 

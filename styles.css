@@ -492,6 +492,10 @@ input[type="text"]:focus {
     margin-bottom: 20px;
     line-height: 1.6;
     color: var(--text-primary);
+    white-space: pre-line;
+    text-align: left;
+    max-height: 300px;
+    overflow-y: auto;
 }
 
 .modal-content button {
@@ -532,4 +536,41 @@ input[type="text"]:focus {
 
 .mb-10 {
     margin-bottom: 10px;
+}
+
+/* ==================== Success Notification ==================== */
+.success-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, var(--success-green) 0%, #45a049 100%);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+    z-index: 1001;
+    min-width: 300px;
+    max-width: 400px;
+    animation: slideIn 0.3s ease-out;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.success-notification strong {
+    display: block;
+    font-size: 16px;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }

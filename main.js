@@ -3,14 +3,26 @@
   * 
   * Author: Pi Ko (pi.ko@nyu.edu)
   * Date: 05 November 2025
-  * Version: v3.5
+  * Version: v3.7
   * 
   * Description:
   * Main Electron process for AIMLAB VR Data Collector.
   * Handles Unity UDP data reception with full bidirectional protocol,
-  * Arduino serial communication, CSV file recording, and application lifecycle.
+  * Arduino serial communication, TSV file reception, and application lifecycle.
   * 
-  * Changelog:
+ * Changelog:
+ * v3.7 - 05 November 2025 - Chunked TSV file transfer implementation
+ *        - Added chunked TSV transfer support (TSV_HEADER, TSV_CHUNK, TSV_COMPLETE)
+ *        - Handles large files split into 8KB chunks with Base64 encoding
+ *        - Progress tracking with updates every 10 chunks
+ *        - Timeout cleanup (60s) for interrupted transfers
+ *        - Chunk validation and reassembly with error checking
+ *        - Files saved to experimentData/Left_Hand or Right_Hand folders
+ * v3.6 - 05 November 2025 - Added TSV file handling from Unity
+ *        - Added handleTSVFileReceived function to save TSV files
+ *        - Files saved to experimentData/Left_Hand or Right_Hand folders
+ *        - Added check-experiment-files IPC handler
+ *        - Removed CSV creation on experiment start (Unity sends TSV instead)
   * v3.5 - 05 November 2025 - Added experiment ID passing to Unity
   *        - IPC handlers now accept experimentId parameter
   *        - Commands sent as CMD:START_LEFT_EXPERIMENT:experimentId
@@ -93,6 +105,9 @@ let handshakeInterval = null;
 let unityEndpoint = null;
 let discoveryInterval = null;
 let myDiscoveryPort = 0;
+
+// TSV Transfer Tracking
+const tsvTransfers = new Map(); // Store ongoing TSV transfers
 
 // Protocol Constants (must match Unity)
 const DISCOVERY_BASE_PORT = 45000;
@@ -372,6 +387,24 @@ ipcMain.handle('connect-unity', async (event, port = DATA_PORT) => {
     dataServer.on('message', (msg, rinfo) => {
       const message = msg.toString();
 
+      // Check for chunked TSV file transfer messages
+      if (message.startsWith('TSV_HEADER|')) {
+        handleTSVHeader(message);
+        return; // Don't process as other message type
+      } else if (message.startsWith('TSV_CHUNK|')) {
+        handleTSVChunk(message);
+        return; // Don't process as other message type
+      } else if (message.startsWith('TSV_COMPLETE|')) {
+        handleTSVComplete(message);
+        return; // Don't process as other message type
+      }
+      
+      // Legacy support: Check if this is a single TSV file transfer (non-chunked)
+      if (message.startsWith('TSV_FILE|')) {
+        handleTSVFileReceived(message);
+        return; // Don't process as other message type
+      }
+      
       // Handle vibration commands from Unity
       if (message.startsWith('VIBRATE:')) {
         const motorId = message.split(':')[1] || '1';
@@ -1299,6 +1332,331 @@ ipcMain.handle('check-file-exists', async (event, experimentId) => {
     return { success: false, exists: false, error: error.message };
   }
 });
+
+// ==================== TSV File Handling ====================
+
+/**
+ * Handle TSV transfer header from Unity
+ * Format: "TSV_HEADER|transferId|fileName|totalChunks|totalSize"
+ * @param {string} message - TSV header message
+ */
+function handleTSVHeader(message) {
+  try {
+    // Parse: "TSV_HEADER|transferId|fileName|totalChunks|totalSize"
+    const parts = message.split('|');
+    if (parts.length >= 5) {
+      const transferId = parts[1];
+      const fileName = parts[2];
+      const totalChunks = parseInt(parts[3]);
+      const totalSize = parseInt(parts[4]);
+      
+      // Initialize transfer tracking
+      tsvTransfers.set(transferId, {
+        fileName: fileName,
+        totalChunks: totalChunks,
+        totalSize: totalSize,
+        chunks: new Array(totalChunks),
+        receivedChunks: 0,
+        startTime: Date.now()
+      });
+      
+      sendLog(`Starting TSV transfer: ${fileName} (${totalChunks} chunks, ${totalSize} bytes)`, 'info');
+      console.log(`[Main] Starting TSV transfer: ${fileName} (${totalChunks} chunks, ${totalSize} bytes)`);
+    } else {
+      sendLog('Invalid TSV header format', 'error');
+    }
+  } catch (error) {
+    sendLog(`Error handling TSV header: ${error.message}`, 'error');
+    console.error('[Main] Error handling TSV header:', error);
+  }
+}
+
+/**
+ * Handle TSV chunk from Unity
+ * Format: "TSV_CHUNK|transferId|chunkIndex|base64Data"
+ * @param {string} message - TSV chunk message
+ */
+function handleTSVChunk(message) {
+  try {
+    // Parse: "TSV_CHUNK|transferId|chunkIndex|base64Data"
+    // Use indexOf to handle base64 data that might contain | characters
+    const firstPipe = message.indexOf('|');
+    const secondPipe = message.indexOf('|', firstPipe + 1);
+    const thirdPipe = message.indexOf('|', secondPipe + 1);
+    
+    if (firstPipe === -1 || secondPipe === -1 || thirdPipe === -1) {
+      sendLog('Invalid TSV chunk format', 'error');
+      return;
+    }
+    
+    const transferId = message.substring(firstPipe + 1, secondPipe);
+    const chunkIndex = parseInt(message.substring(secondPipe + 1, thirdPipe));
+    const base64Data = message.substring(thirdPipe + 1);
+    
+    const transfer = tsvTransfers.get(transferId);
+    if (!transfer) {
+      sendLog(`Unknown transfer ID: ${transferId}`, 'error');
+      console.error(`[Main] Unknown transfer ID: ${transferId}`);
+      return;
+    }
+    
+    // Validate chunk index
+    if (chunkIndex < 0 || chunkIndex >= transfer.totalChunks) {
+      sendLog(`Invalid chunk index: ${chunkIndex}`, 'error');
+      return;
+    }
+    
+    // Store chunk (decode from base64)
+    try {
+      transfer.chunks[chunkIndex] = Buffer.from(base64Data, 'base64');
+      transfer.receivedChunks++;
+      
+      // Log progress every 10 chunks or on last chunk
+      if (transfer.receivedChunks % 10 === 0 || transfer.receivedChunks === transfer.totalChunks) {
+        const progress = Math.round((transfer.receivedChunks / transfer.totalChunks) * 100);
+        sendLog(`TSV transfer progress: ${progress}% (${transfer.receivedChunks}/${transfer.totalChunks} chunks)`, 'info');
+        console.log(`[Main] TSV transfer progress: ${transfer.receivedChunks}/${transfer.totalChunks} (${progress}%)`);
+        
+        // Send progress update to renderer
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('tsv-progress', {
+            fileName: transfer.fileName,
+            progress: progress,
+            received: transfer.receivedChunks,
+            total: transfer.totalChunks
+          });
+        }
+      }
+    } catch (decodeError) {
+      sendLog(`Error decoding chunk ${chunkIndex}: ${decodeError.message}`, 'error');
+      console.error(`[Main] Error decoding chunk ${chunkIndex}:`, decodeError);
+    }
+  } catch (error) {
+    sendLog(`Error handling TSV chunk: ${error.message}`, 'error');
+    console.error('[Main] Error handling TSV chunk:', error);
+  }
+}
+
+/**
+ * Handle TSV transfer completion from Unity
+ * Format: "TSV_COMPLETE|transferId"
+ * @param {string} message - TSV completion message
+ */
+function handleTSVComplete(message) {
+  try {
+    // Parse: "TSV_COMPLETE|transferId"
+    const parts = message.split('|');
+    if (parts.length >= 2) {
+      const transferId = parts[1];
+      
+      const transfer = tsvTransfers.get(transferId);
+      if (!transfer) {
+        sendLog(`Unknown transfer ID for completion: ${transferId}`, 'error');
+        console.error(`[Main] Unknown transfer ID for completion: ${transferId}`);
+        return;
+      }
+      
+      // Check if all chunks received
+      if (transfer.receivedChunks !== transfer.totalChunks) {
+        sendLog(`Incomplete transfer: received ${transfer.receivedChunks}/${transfer.totalChunks} chunks for ${transfer.fileName}`, 'error');
+        console.error(`[Main] Incomplete transfer: received ${transfer.receivedChunks}/${transfer.totalChunks} chunks`);
+        
+        // Clean up incomplete transfer
+        tsvTransfers.delete(transferId);
+        return;
+      }
+      
+      // Check for missing chunks
+      let missingChunks = [];
+      for (let i = 0; i < transfer.totalChunks; i++) {
+        if (!transfer.chunks[i]) {
+          missingChunks.push(i);
+        }
+      }
+      
+      if (missingChunks.length > 0) {
+        sendLog(`Missing chunks: ${missingChunks.join(', ')} for ${transfer.fileName}`, 'error');
+        console.error(`[Main] Missing chunks: ${missingChunks.join(', ')}`);
+        tsvTransfers.delete(transferId);
+        return;
+      }
+      
+      // Reassemble the file
+      const completeBuffer = Buffer.concat(transfer.chunks);
+      const fileContent = completeBuffer.toString('utf8');
+      
+      // Determine which hand folder based on filename
+      let subFolder = '';
+      if (transfer.fileName.includes('LEFT_') || transfer.fileName.includes('HandLeft') || transfer.fileName.includes('Left')) {
+        subFolder = 'Left_Hand';
+      } else if (transfer.fileName.includes('RIGHT_') || transfer.fileName.includes('HandRight') || transfer.fileName.includes('Right')) {
+        subFolder = 'Right_Hand';
+      }
+      
+      // Save to experimentData folder
+      const basePath = app.isPackaged 
+        ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
+        : path.join(__dirname, 'experimentData');
+      
+      const folderPath = subFolder ? path.join(basePath, subFolder) : basePath;
+      
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true });
+        sendLog(`Created directory: ${folderPath}`, 'success');
+      }
+      
+      const filePath = path.join(folderPath, transfer.fileName);
+      fs.writeFileSync(filePath, fileContent, 'utf8');
+      
+      // Calculate transfer time
+      const transferTime = ((Date.now() - transfer.startTime) / 1000).toFixed(2);
+      
+      sendLog(`TSV file saved: ${transfer.fileName} (transfer took ${transferTime}s)`, 'success');
+      sendLog(`File location: ${filePath}`, 'info');
+      console.log(`[Main] TSV file saved: ${filePath} (transfer took ${transferTime}s)`);
+      
+      // Notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('tsv-saved', { 
+          fileName: transfer.fileName, 
+          path: filePath,
+          transferTime: transferTime,
+          fileSize: transfer.totalSize
+        });
+      }
+      
+      // Clean up transfer tracking
+      tsvTransfers.delete(transferId);
+    } else {
+      sendLog('Invalid TSV complete format', 'error');
+    }
+  } catch (error) {
+    sendLog(`Error completing TSV transfer: ${error.message}`, 'error');
+    console.error('[Main] Error completing TSV transfer:', error);
+  }
+}
+
+/**
+ * Handle TSV file received from Unity (legacy non-chunked format)
+ * Format: "TSV_FILE|filename|content"
+ * @param {string} message - Complete TSV file message
+ */
+function handleTSVFileReceived(message) {
+  try {
+    // Parse message format: "TSV_FILE|filename|content"
+    const parts = message.split('|');
+    if (parts.length >= 3) {
+      const fileName = parts[1];
+      const fileContent = parts.slice(2).join('|'); // In case content has | characters
+      
+      // Determine which hand folder based on filename
+      let subFolder = '';
+      if (fileName.includes('LEFT_') || fileName.includes('HandLeft') || fileName.includes('Left')) {
+        subFolder = 'Left_Hand';
+      } else if (fileName.includes('RIGHT_') || fileName.includes('HandRight') || fileName.includes('Right')) {
+        subFolder = 'Right_Hand';
+      }
+      
+      // Save to experimentData folder in Documents
+      const basePath = app.isPackaged 
+        ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
+        : path.join(__dirname, 'experimentData');
+      
+      const folderPath = subFolder ? path.join(basePath, subFolder) : basePath;
+      
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true });
+        sendLog(`Created directory: ${folderPath}`, 'success');
+      }
+      
+      const filePath = path.join(folderPath, fileName);
+      fs.writeFileSync(filePath, fileContent, 'utf8');
+      
+      sendLog(`TSV file saved: ${fileName}`, 'success');
+      sendLog(`File location: ${filePath}`, 'info');
+      
+      // Notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('tsv-saved', { fileName, path: filePath });
+      }
+    } else {
+      sendLog('Invalid TSV file format received', 'error');
+    }
+  } catch (error) {
+    sendLog(`Error saving TSV file: ${error.message}`, 'error');
+    console.error('[Main] Error saving TSV file:', error);
+  }
+}
+
+/**
+ * Check for existing experiment files with given ID
+ * @param {string} experimentId - Experiment ID to check
+ */
+ipcMain.handle('check-experiment-files', async (event, experimentId) => {
+  try {
+    const basePath = app.isPackaged 
+      ? path.join(app.getPath('documents'), 'AIMLAB_VR_Data', 'experimentData')
+      : path.join(__dirname, 'experimentData');
+    
+    const leftPath = path.join(basePath, 'Left_Hand');
+    const rightPath = path.join(basePath, 'Right_Hand');
+    
+    let existingFiles = [];
+    
+    // Check Left_Hand folder
+    if (fs.existsSync(leftPath)) {
+      try {
+        const leftFiles = fs.readdirSync(leftPath);
+        const matchingLeft = leftFiles.filter(file => 
+          file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
+        );
+        existingFiles = existingFiles.concat(matchingLeft.map(f => `Left_Hand/${f}`));
+      } catch (err) {
+        sendLog(`Error reading Left_Hand folder: ${err.message}`, 'error');
+      }
+    }
+    
+    // Check Right_Hand folder
+    if (fs.existsSync(rightPath)) {
+      try {
+        const rightFiles = fs.readdirSync(rightPath);
+        const matchingRight = rightFiles.filter(file => 
+          file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
+        );
+        existingFiles = existingFiles.concat(matchingRight.map(f => `Right_Hand/${f}`));
+      } catch (err) {
+        sendLog(`Error reading Right_Hand folder: ${err.message}`, 'error');
+      }
+    }
+    
+    return existingFiles;
+  } catch (error) {
+    sendLog(`Error checking experiment files: ${error.message}`, 'error');
+    console.error('[Main] Error checking experiment files:', error);
+    return [];
+  }
+});
+
+// ==================== TSV Transfer Cleanup ====================
+
+/**
+ * Cleanup timed-out TSV transfers
+ * Runs every 30 seconds to remove transfers older than 60 seconds
+ */
+setInterval(() => {
+  const now = Date.now();
+  const timeout = 60000; // 60 seconds timeout
+  
+  for (const [id, transfer] of tsvTransfers.entries()) {
+    if (now - transfer.startTime > timeout) {
+      sendLog(`Cleaning up timed-out transfer: ${transfer.fileName}`, 'warning');
+      console.log(`[Main] Cleaning up timed-out transfer: ${transfer.fileName}`);
+      tsvTransfers.delete(id);
+    }
+  }
+}, 30000); // Check every 30 seconds
 
 // ==================== Application Lifecycle ====================
 

@@ -3,7 +3,7 @@
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
  * Date: 05 November 2025
- * Version: v3.5
+ * Version: v3.7
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
@@ -11,6 +11,17 @@
  * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v3.7 - 05 November 2025 - Chunked TSV transfer support
+ *        - Added TSV progress tracking and display
+ *        - Added success notification with transfer details
+ *        - Shows transfer time and file size
+ *        - Progress updates every 10 chunks
+ * v3.6 - 05 November 2025 - TSV file handling and validation
+ *        - Removed CSV creation on experiment start
+ *        - Added validateExperimentId function with file checking
+ *        - Added TSV saved notification listener
+ *        - Experiment ID validated on input change/blur
+ *        - Shows modal for existing files
  * v3.5 - 05 November 2025 - Pass experiment ID to Unity
  *        - Added validation that experiment ID must end with a number
  *        - Experiment ID now sent to Unity in command
@@ -145,6 +156,31 @@ function setupEventListeners() {
     window.api.onFileRenamed((event, data) => {
         showFileRenameModal(data);
     });
+    
+    // Listen for TSV saved confirmation
+    window.api.onTSVSaved((event, data) => {
+        const transferTime = data.transferTime || 'N/A';
+        const fileSize = data.fileSize ? ` (${(data.fileSize / 1024).toFixed(2)} KB)` : '';
+        addLog(`✓ TSV file saved: ${data.fileName} (Transfer time: ${transferTime}s)${fileSize}`, 'success');
+        addLog(`File location: ${data.path}`, 'info');
+        
+        // Show success notification
+        showSuccessNotification(data.fileName, transferTime, fileSize);
+    });
+    
+    // Listen for TSV transfer progress
+    window.api.onTSVProgress((event, data) => {
+        addLog(`TSV transfer: ${data.fileName} - ${data.progress}% (${data.received}/${data.total} chunks)`, 'info');
+    });
+    
+    // Add experiment ID validation on input change
+    elements.experimentId.addEventListener('change', async () => {
+        await validateExperimentId();
+    });
+    
+    elements.experimentId.addEventListener('blur', async () => {
+        await validateExperimentId();
+    });
 }
 
 // ==================== Unity Connection Functions ====================
@@ -181,7 +217,51 @@ async function refreshUnityConnection() {
 }
 
 /**
- * Start experiment in Unity and begin recording
+ * Validate experiment ID and check for existing files
+ */
+async function validateExperimentId() {
+    const experimentId = elements.experimentId.value.trim();
+    
+    if (!experimentId) {
+        return;
+    }
+    
+    // Validate that experiment ID ends with a number
+    if (!/\d$/.test(experimentId)) {
+        showModal('Invalid Experiment ID', 'Experiment ID must end with a number.');
+        elements.experimentId.value = '';
+        elements.startLeftExperiment.disabled = true;
+        elements.startRightExperiment.disabled = true;
+        return;
+    }
+    
+    // Check for existing files
+    try {
+        const existingFiles = await window.api.checkExperimentFiles(experimentId);
+        
+        if (existingFiles.length > 0) {
+            const fileList = existingFiles.join('\n');
+            showModal(
+                'Experiment ID Already Exists',
+                `The following files already exist for experiment ID "${experimentId}":\n\n${fileList}\n\nPlease use a different experiment ID.`
+            );
+            elements.experimentId.value = '';
+            elements.startLeftExperiment.disabled = true;
+            elements.startRightExperiment.disabled = true;
+        } else {
+            // Enable start buttons if Unity is connected
+            if (unityConnected) {
+                elements.startLeftExperiment.disabled = false;
+                elements.startRightExperiment.disabled = false;
+            }
+        }
+    } catch (error) {
+        addLog(`Error checking experiment files: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Start experiment in Unity (no CSV creation - wait for Unity TSV)
  * @param {string} hand - Which hand to use ('left' or 'right')
  */
 async function startExperiment(hand = 'right') {
@@ -189,14 +269,14 @@ async function startExperiment(hand = 'right') {
     
     // Validate Experiment ID
     if (!experimentId) {
-        addLog('Please enter an Experiment ID', 'error');
+        showModal('Missing Experiment ID', 'Please enter an Experiment ID before starting the experiment.');
         elements.experimentId.focus();
         return;
     }
     
     // Validate that experiment ID ends with a number
     if (!/\d$/.test(experimentId)) {
-        addLog('Experiment ID must end with a number', 'error');
+        showModal('Invalid Experiment ID', 'Experiment ID must end with a number.');
         elements.experimentId.focus();
         return;
     }
@@ -206,89 +286,52 @@ async function startExperiment(hand = 'right') {
         return;
     }
     
-    // Modify filename based on hand
-    const modifiedId = `${hand.toUpperCase()}_${experimentId}`;
-    
-    // Check if file already exists
-    const checkResult = await window.api.checkFileExists(modifiedId);
-    if (checkResult.exists) {
-        showFileExistsModal(modifiedId);
-        return;
-    }
-    
-    // Start recording first
-    addLog(`Starting ${hand} hand recording with ID: ${modifiedId}...`, 'info');
-    const recordResult = await window.api.startRecording(modifiedId);
-    
-    if (!recordResult.success) {
-        addLog(`Failed to start recording: ${recordResult.error}`, 'error');
-        return;
-    }
-    
-    isRecording = true;
-    elements.recordingStatus.textContent = `🔴 Recording: ${recordResult.filename}.csv`;
-    elements.recordingStatus.classList.add('active');
-    addLog(`Recording started: ${recordResult.filename}.csv`, 'success');
-    
-    // Send appropriate command based on hand WITH experiment ID
+    // DO NOT create CSV file here - wait for Unity to send TSV
+    // Just send command to Unity
     const command = hand === 'left' ? 'startLeftExperiment' : 'startRightExperiment';
     addLog(`Sending Start ${hand.charAt(0).toUpperCase() + hand.slice(1)} Hand Experiment command to Unity with ID: ${experimentId}...`, 'info');
-    const result = await window.api[command](experimentId);  // Pass the experiment ID
+    const result = await window.api[command](experimentId);
     
     if (result.success) {
         elements.startLeftExperiment.disabled = true;
         elements.startRightExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
         elements.experimentId.disabled = true;
+        
+        isRecording = true;
+        elements.recordingStatus.textContent = `🔴 Recording ${hand.toUpperCase()} hand: ${experimentId}`;
+        elements.recordingStatus.classList.add('active');
+        
         addLog(`${hand.charAt(0).toUpperCase() + hand.slice(1)} hand experiment started in Unity with ID: ${experimentId}`, 'success');
-        addLog('Unity should now be sending VR data', 'info');
+        addLog('Waiting for Unity to send TSV data...', 'info');
     } else {
         addLog(`Failed to start ${hand} hand experiment: ${result.error}`, 'error');
-        // Stop recording if experiment failed to start
-        await stopRecordingOnly();
     }
 }
 
 /**
- * Stop experiment in Unity and stop recording
+ * Stop experiment in Unity
  */
 async function stopExperiment() {
-    // Send Stop Experiment command to Unity first
+    // Send Stop Experiment command to Unity
     addLog('Sending Stop Experiment command to Unity...', 'info');
     const result = await window.api.stopExperiment();
     
     if (result.success) {
         addLog('Experiment stopped in Unity', 'success');
+        addLog('Unity will save TSV file and send it to Electron', 'info');
     } else {
         addLog(`Failed to stop experiment: ${result.error}`, 'error');
     }
     
-    // Stop recording regardless of Unity result
-    await stopRecordingOnly();
-    
+    // Update UI
+    isRecording = false;
     elements.startLeftExperiment.disabled = false;
     elements.startRightExperiment.disabled = false;
     elements.stopExperiment.disabled = true;
     elements.experimentId.disabled = false;
-}
-
-/**
- * Internal function to stop recording without UI side effects
- */
-async function stopRecordingOnly() {
-    if (!isRecording) return;
-    
-    const result = await window.api.stopRecording();
-    
-    if (result.success) {
-        isRecording = false;
-        elements.recordingStatus.textContent = '';
-        elements.recordingStatus.classList.remove('active');
-        addLog(`Recording saved: ${result.filename}.csv`, 'success');
-        addLog(`File location: ExperimentalData/${result.filename}.csv`, 'info');
-    } else {
-        addLog(`Failed to stop recording: ${result.error}`, 'error');
-    }
+    elements.recordingStatus.textContent = '';
+    elements.recordingStatus.classList.remove('active');
 }
 
 // ==================== Vibration Motor Connection Functions ====================
@@ -441,10 +484,25 @@ function showFileRenameModal(data) {
  * @param {string} experimentId - The experiment ID that already exists
  */
 function showFileExistsModal(experimentId) {
-    elements.modalMessage.textContent = 
-        `A file with Experiment ID "${experimentId}.csv" already exists. Please use a different Experiment ID.`;
-    elements.modal.style.display = 'flex';
+    showModal(
+        'File Already Exists',
+        `A file with Experiment ID "${experimentId}.csv" already exists. Please use a different Experiment ID.`
+    );
     addLog(`Cannot start: File ${experimentId}.csv already exists`, 'error');
+}
+
+/**
+ * Show modal with title and message
+ * @param {string} title - Modal title
+ * @param {string} message - Modal message
+ */
+function showModal(title, message) {
+    const modalTitle = elements.modal.querySelector('h3');
+    if (modalTitle) {
+        modalTitle.textContent = title;
+    }
+    elements.modalMessage.textContent = message;
+    elements.modal.style.display = 'flex';
 }
 
 /**
@@ -452,6 +510,32 @@ function showFileExistsModal(experimentId) {
  */
 function closeModal() {
     elements.modal.style.display = 'none';
+}
+
+/**
+ * Show success notification for TSV file save
+ * @param {string} fileName - Name of saved file
+ * @param {string} transferTime - Transfer time in seconds
+ * @param {string} fileSize - File size information
+ */
+function showSuccessNotification(fileName, transferTime, fileSize) {
+    const notification = document.createElement('div');
+    notification.className = 'success-notification';
+    notification.innerHTML = `
+        <strong>Data Saved Successfully</strong><br>
+        File: ${fileName}<br>
+        Transfer time: ${transferTime}s${fileSize}
+    `;
+    document.body.appendChild(notification);
+    
+    // Remove after 5 seconds
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+            notification.remove();
+        }, 300);
+    }, 5000);
 }
 
 // ==================== Keyboard Shortcuts ====================
