@@ -2,8 +2,8 @@
  * AIMLAB VR Data Collector - Renderer Process
  * 
  * Author: Pi Ko (pi.ko@nyu.edu)
- * Date: 19 November 2025
- * Version: v3.9
+ * Date: 08 January 2026
+ * Version: v4.2
  * 
  * Description:
  * Renderer process JavaScript for AIMLAB VR Data Collector.
@@ -11,6 +11,20 @@
  * communication, and experiment data folder access.
  * 
  * Changelog:
+ * v4.2 - 08 January 2026 - ADB-only saving with duplicate handling
+ *        - All saves now go through ADB sync
+ *        - Duplicate files automatically renamed with timestamp
+ *        - TSV transfers trigger ADB sync (no local save)
+ * v4.1 - 08 January 2026 - Simplified data flow with ADB-only saving
+ *        - Renamed "Start Right Hand" to "Start Experiment"
+ *        - Removed saveMidExperiment function and button
+ *        - Stop Experiment now waits 2 seconds then runs ADB sync only
+ *        - No TSV transfer from Unity - all data via ADB sync
+ * v4.0 - 08 January 2026 - UI cleanup and timestamp-based file naming
+ *        - Hidden "Start Left Hand" button (kept functionality for compatibility)
+ *        - Hidden "Toggle Transparency for Peg Board" button (kept functionality)
+ *        - File naming now uses timestamps: [ExperimentID]-YYYY-Mon-DD-HH-MM-am/pm.extension
+ *        - Files never overwrite - always create new timestamped files
  * v3.9 - 19 November 2025 - Added mid-experiment save feature
  *        - Added saveMidExperiment function and button
  *        - Button enabled during experiment, disabled when stopped
@@ -86,7 +100,7 @@ const elements = {
     
     // Experiment data controls
     openDataFolder: document.getElementById('openDataFolder'),
-    saveMidExperiment: document.getElementById('saveMidExperiment'),
+    // saveMidExperiment removed in v4.1 - ADB sync is the only save mechanism
     syncExperimentData: document.getElementById('syncExperimentData'),
     setAdbPath: document.getElementById('setAdbPath'),
     
@@ -158,7 +172,7 @@ function setupEventListeners() {
     
     // Data Folder
     elements.openDataFolder.addEventListener('click', openDataFolder);
-    elements.saveMidExperiment.addEventListener('click', saveMidExperiment);
+    // saveMidExperiment event listener removed in v4.1
     elements.syncExperimentData.addEventListener('click', syncExperimentData);
     elements.setAdbPath.addEventListener('click', setAdbPath);
     
@@ -183,15 +197,14 @@ function setupEventListeners() {
         showFileRenameModal(data);
     });
     
-    // Listen for TSV saved confirmation
+    // Listen for TSV saved confirmation (v4.2: via ADB sync)
     window.api.onTSVSaved((event, data) => {
-        const transferTime = data.transferTime || 'N/A';
-        const fileSize = data.fileSize ? ` (${(data.fileSize / 1024).toFixed(2)} KB)` : '';
-        addLog(`✓ TSV file saved: ${data.fileName} (Transfer time: ${transferTime}s)${fileSize}`, 'success');
-        addLog(`File location: ${data.path}`, 'info');
+        const message = data.message || 'Synced via ADB';
+        addLog(`✓ Data synced: ${data.fileName} (${message})`, 'success');
+        addLog(`Location: ${data.path}`, 'info');
         
         // Show success notification
-        showSuccessNotification(data.fileName, transferTime, fileSize);
+        showSuccessNotification(data.fileName, 'ADB', '');
     });
     
     // Listen for TSV transfer progress
@@ -322,7 +335,6 @@ async function startExperiment(hand = 'right') {
         elements.startLeftExperiment.disabled = true;
         elements.startRightExperiment.disabled = true;
         elements.stopExperiment.disabled = false;
-        elements.saveMidExperiment.disabled = false; // Enable mid-save button
         elements.experimentId.disabled = true;
         
         isRecording = true;
@@ -330,14 +342,14 @@ async function startExperiment(hand = 'right') {
         elements.recordingStatus.classList.add('active');
         
         addLog(`${hand.charAt(0).toUpperCase() + hand.slice(1)} hand experiment started in Unity with ID: ${experimentId}`, 'success');
-        addLog('Waiting for Unity to send TSV data...', 'info');
+        addLog('Data will be synced via ADB when experiment stops', 'info');
     } else {
         addLog(`Failed to start ${hand} hand experiment: ${result.error}`, 'error');
     }
 }
 
 /**
- * Stop experiment in Unity
+ * Stop experiment in Unity - ADB sync only (no TSV transfer)
  */
 async function stopExperiment() {
     // Send Stop Experiment command to Unity
@@ -346,18 +358,18 @@ async function stopExperiment() {
     
     if (result.success) {
         addLog('Experiment stopped in Unity', 'success');
-        addLog('Unity will save TSV file and send it to Electron', 'info');
+        addLog('Waiting 2 seconds before syncing data via ADB...', 'info');
         
-        // Auto-sync after 4 seconds
+        // ADB sync after 2 seconds (only save mechanism)
         setTimeout(async () => {
-            addLog('Auto-syncing experiment data...', 'info');
+            addLog('Syncing experiment data via ADB...', 'info');
             const syncResult = await window.api.syncExperimentData();
             if (syncResult.success) {
-                addLog(`Data synced: ${syncResult.path}`, 'success');
+                addLog(`Data synced successfully: ${syncResult.path}`, 'success');
             } else {
                 addLog(`Sync failed: ${syncResult.error}`, 'error');
             }
-        }, 4000);
+        }, 2000);
     } else {
         addLog(`Failed to stop experiment: ${result.error}`, 'error');
     }
@@ -367,7 +379,6 @@ async function stopExperiment() {
     elements.startLeftExperiment.disabled = false;
     elements.startRightExperiment.disabled = false;
     elements.stopExperiment.disabled = true;
-    elements.saveMidExperiment.disabled = true; // Disable mid-save button
     elements.experimentId.disabled = false;
     elements.recordingStatus.textContent = '';
     elements.recordingStatus.classList.remove('active');
@@ -465,41 +476,7 @@ async function setAdbPath() {
     }
 }
 
-/**
- * Save data mid-experiment without stopping
- */
-async function saveMidExperiment() {
-    if (!unityConnected) {
-        addLog('Unity not connected', 'error');
-        return;
-    }
-    
-    addLog('Requesting mid-experiment save...', 'info');
-    
-    try {
-        // Send save command to Unity
-        const result = await window.api.saveMidExperiment();
-        
-        if (result.success) {
-            addLog('Mid-experiment save initiated', 'success');
-            
-            // Wait 4 seconds then sync
-            setTimeout(async () => {
-                addLog('Auto-syncing experiment data...', 'info');
-                const syncResult = await window.api.syncExperimentData();
-                if (syncResult.success) {
-                    addLog(`Data synced: ${syncResult.path}`, 'success');
-                } else {
-                    addLog(`Sync failed: ${syncResult.error}`, 'error');
-                }
-            }, 4000);
-        } else {
-            addLog(`Mid-save failed: ${result.error}`, 'error');
-        }
-    } catch (error) {
-        addLog(`Mid-save error: ${error.message}`, 'error');
-    }
-}
+// saveMidExperiment function removed in v4.1 - ADB sync is the only save mechanism
 
 /**
  * Toggle peg board transparency in Unity

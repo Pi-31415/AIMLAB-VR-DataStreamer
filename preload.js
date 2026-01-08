@@ -174,11 +174,12 @@ contextBridge.exposeInMainWorld('api', {
    */
   setAdbPath: () => ipcRenderer.invoke("set-adb-path"),
   
-  /**
-   * Save data mid-experiment without stopping
-   * @returns {Promise<Object>} Result with success status
-   */
-  saveMidExperiment: () => ipcRenderer.invoke('save-mid-experiment'),
+  // saveMidExperiment removed in v4.1 - ADB sync is the only save mechanism
+  // /**
+  //  * Save data mid-experiment without stopping
+  //  * @returns {Promise<Object>} Result with success status
+  //  */
+  // saveMidExperiment: () => ipcRenderer.invoke('save-mid-experiment'),
   
   /**
    * Check if a file with the given experiment ID already exists

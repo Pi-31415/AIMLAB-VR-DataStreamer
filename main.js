@@ -2,8 +2,8 @@
   * AIMLAB VR Streamer - Main Process
   * 
   * Author: Pi Ko (pi.ko@nyu.edu)
-  * Date: 19 November 2025
-  * Version: v3.9
+  * Date: 08 January 2026
+  * Version: v4.2
   * 
   * Description:
   * Main Electron process for AIMLAB VR Data Collector.
@@ -11,6 +11,23 @@
   * Arduino serial communication, TSV file reception, and application lifecycle.
   * 
  * Changelog:
+ * v4.2 - 08 January 2026 - ADB-only saving with duplicate handling
+ *        - TSV transfers no longer save locally, trigger ADB sync instead
+ *        - ADB sync pulls to temp folder first, then moves with conflict detection
+ *        - Duplicate files get timestamp appended: filename-2026-Jan-08-12-30-pm.tsv
+ *        - All data saving exclusively through ADB sync
+ * v4.1 - 08 January 2026 - Simplified data flow with ADB-only saving
+ *        - Added cleanupExperimentDataSubfolders() to remove subfolders on startup
+ *        - All files now saved directly to ExperimentData (no Left_Hand/Right_Hand subfolders)
+ *        - ADB sync is the only file save mechanism
+ *        - TSV transfer handlers kept for backward compatibility but not primary save method
+ * v4.0 - 08 January 2026 - Timestamp-based file naming system
+ *        - Added generateTimestamp() function for formatted timestamps
+ *        - Added generateUniqueFilename() function for timestamp-based naming
+ *        - Changed file naming to: [ExperimentID]-YYYY-Mon-DD-HH-MM-am/pm.extension
+ *        - Files never overwrite - adds seconds/milliseconds if needed
+ *        - Modified check-file-exists to always allow (no blocking)
+ *        - Updated TSV file saving with timestamp format
  * v3.9 - 19 November 2025 - Added mid-experiment save with auto-sync
  *        - Added save-mid-experiment IPC handler
  *        - Sends SAVE_MID_EXPERIMENT command to Unity
@@ -109,13 +126,51 @@ const { execFile } = require('child_process');   // For running adb
 // Application Path References
 const APP_PATH = app.isPackaged ? path.dirname(app.getPath('exe')) : app.getAppPath();
 const EXPERIMENT_DATA_PATH = path.join(APP_PATH, 'ExperimentData');
-const LEFT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Left_Hand');
-const RIGHT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Right_Hand');
+// Subfolder paths removed in v4.1 - all files now saved directly to EXPERIMENT_DATA_PATH
+// const LEFT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Left_Hand');
+// const RIGHT_HAND_PATH = path.join(EXPERIMENT_DATA_PATH, 'Right_Hand');
 const ADB_CONFIG_PATH = path.join(APP_PATH, 'adb-config.json');
 
 console.log('[AIMLAB] App path:', APP_PATH);
 console.log('[AIMLAB] Experiment data path:', EXPERIMENT_DATA_PATH);
 console.log('[AIMLAB] ADB config path:', ADB_CONFIG_PATH);
+
+/**
+ * Clean up subfolders in ExperimentData directory on startup
+ * Only removes subdirectories, preserves files
+ */
+function cleanupExperimentDataSubfolders() {
+  try {
+    // Create main directory if it doesn't exist
+    if (!fs.existsSync(EXPERIMENT_DATA_PATH)) {
+      fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
+      console.log('[AIMLAB] Created ExperimentData directory');
+      return;
+    }
+    
+    // Read all items in the directory
+    const items = fs.readdirSync(EXPERIMENT_DATA_PATH);
+    
+    for (const item of items) {
+      const itemPath = path.join(EXPERIMENT_DATA_PATH, item);
+      const stats = fs.statSync(itemPath);
+      
+      // Only delete directories, not files
+      if (stats.isDirectory()) {
+        // Recursively delete the subdirectory
+        fs.rmSync(itemPath, { recursive: true, force: true });
+        console.log(`[AIMLAB] Removed subdirectory: ${item}`);
+      }
+    }
+    
+    console.log('[AIMLAB] ExperimentData subfolder cleanup complete');
+  } catch (error) {
+    console.error('[AIMLAB] Error cleaning up subfolders:', error.message);
+  }
+}
+
+// Run cleanup on module load
+cleanupExperimentDataSubfolders();
 
 /**
  * Load ADB path from configuration file
@@ -182,6 +237,67 @@ const CMD_START_RIGHT_EXPERIMENT = "START_RIGHT_EXPERIMENT";
 const CMD_STOP_EXPERIMENT = "STOP_EXPERIMENT";
 const CMD_SAVE_MID_EXPERIMENT = "SAVE_MID_EXPERIMENT";
 const CMD_TOGGLE_PEGBOARD_TRANSPARENCY = "TOGGLE_PEGBOARD_TRANSPARENCY";
+
+// ==================== Timestamp and File Naming Utilities ====================
+
+/**
+ * Generate formatted timestamp string for filenames
+ * Format: YYYY-Mon-DD-HH-MM-am/pm
+ * Example: 2026-Jan-08-12-30-pm
+ * @returns {string} Formatted timestamp
+ */
+function generateTimestamp() {
+  const now = new Date();
+  
+  const year = now.getFullYear();
+  
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = monthNames[now.getMonth()];
+  
+  const day = String(now.getDate()).padStart(2, '0');
+  
+  let hours = now.getHours();
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // Convert 0 to 12
+  const hoursStr = String(hours).padStart(2, '0');
+  
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}-${hoursStr}-${minutes}-${ampm}`;
+}
+
+/**
+ * Generate unique filename that doesn't overwrite existing files
+ * Format: [ExperimentID]-YYYY-Mon-DD-HH-MM-am/pm.extension
+ * @param {string} directory - Target directory path
+ * @param {string} experimentId - The experiment ID
+ * @param {string} extension - File extension (e.g., 'tsv', 'csv')
+ * @returns {string} Full file path that doesn't exist
+ */
+function generateUniqueFilename(directory, experimentId, extension) {
+  const timestamp = generateTimestamp();
+  let filename = `${experimentId}-${timestamp}.${extension}`;
+  let filepath = path.join(directory, filename);
+  
+  // If file exists, add seconds to make it unique
+  if (fs.existsSync(filepath)) {
+    const seconds = String(new Date().getSeconds()).padStart(2, '0');
+    filename = `${experimentId}-${timestamp}-${seconds}.${extension}`;
+    filepath = path.join(directory, filename);
+  }
+  
+  // If still exists (rare), add milliseconds
+  if (fs.existsSync(filepath)) {
+    const ms = String(new Date().getMilliseconds()).padStart(3, '0');
+    const seconds = String(new Date().getSeconds()).padStart(2, '0');
+    filename = `${experimentId}-${timestamp}-${seconds}-${ms}.${extension}`;
+    filepath = path.join(directory, filename);
+  }
+  
+  return filepath;
+}
 
 /**
  * Creates the main application window
@@ -1415,13 +1531,7 @@ ipcMain.handle('open-data-folder', async () => {
       }
     }
     
-    // Create subdirectories if they don't exist
-    if (!fs.existsSync(LEFT_HAND_PATH)) {
-      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
-    }
-    if (!fs.existsSync(RIGHT_HAND_PATH)) {
-      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
-    }
+    // Note: Subfolders removed in v4.1 - all files saved directly to ExperimentData
     
     // Open folder in Windows Explorer (or default file manager on other OS)
     const openResult = await shell.openPath(EXPERIMENT_DATA_PATH);
@@ -1474,39 +1584,42 @@ ipcMain.handle("set-adb-path", async () => {
  * Sync experiment data from headset (ADB pull) into ExperimentalData
  * Copies: /sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/.
  */
+/**
+ * Sync experiment data from headset (ADB pull) into ExperimentData
+ * Handles file conflicts by renaming new files with timestamps if duplicates exist
+ */
 ipcMain.handle('sync-experiment-data', async () => {
   try {
-    const adbPath = loadAdbPath();   // Use stored ADB path
+    const adbPath = loadAdbPath();
 
-    // Ensure ExperimentData directory exists (same logic as open-data-folder)
+    // Ensure ExperimentData directory exists
     if (!fs.existsSync(EXPERIMENT_DATA_PATH)) {
-      try {
-        fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
-        sendLog(`Created ExperimentData folder: ${EXPERIMENT_DATA_PATH}`, 'success');
-      } catch (mkdirErr) {
-        throw new Error(`Cannot create data directory: ${mkdirErr.message}`);
-      }
+      fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
+      sendLog(`Created ExperimentData folder: ${EXPERIMENT_DATA_PATH}`, 'success');
     }
     
-    // Create subdirectories if they don't exist
-    if (!fs.existsSync(LEFT_HAND_PATH)) {
-      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
+    // Create temp directory for ADB pull
+    const tempSyncPath = path.join(APP_PATH, 'temp_sync');
+    if (fs.existsSync(tempSyncPath)) {
+      fs.rmSync(tempSyncPath, { recursive: true, force: true });
     }
-    if (!fs.existsSync(RIGHT_HAND_PATH)) {
-      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
-    }
-
+    fs.mkdirSync(tempSyncPath, { recursive: true });
+    
     const sourcePath = '/sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/.';
-    const adbArgs = ['-d', 'pull', sourcePath, EXPERIMENT_DATA_PATH];
+    const adbArgs = ['-d', 'pull', sourcePath, tempSyncPath];
 
-    sendLog(`Starting ADB sync: ${adbPath} ${adbArgs.join(' ')}`, 'info');
+    sendLog(`Starting ADB sync to temp folder...`, 'info');
 
     return await new Promise((resolve) => {
-      execFile(adbPath, adbArgs, { windowsHide: true }, (error, stdout, stderr) => {
+      execFile(adbPath, adbArgs, { windowsHide: true }, async (error, stdout, stderr) => {
         if (error) {
           sendLog(`ADB sync failed: ${error.message}`, 'error');
           if (stderr) {
             sendLog(`ADB stderr: ${stderr}`, 'error');
+          }
+          // Clean up temp folder
+          if (fs.existsSync(tempSyncPath)) {
+            fs.rmSync(tempSyncPath, { recursive: true, force: true });
           }
           return resolve({
             success: false,
@@ -1517,6 +1630,19 @@ ipcMain.handle('sync-experiment-data', async () => {
 
         if (stdout) {
           sendLog(`ADB output: ${stdout}`, 'info');
+        }
+        
+        // Move files from temp to ExperimentData, handling duplicates
+        try {
+          const movedFiles = await moveFilesWithDuplicateHandling(tempSyncPath, EXPERIMENT_DATA_PATH);
+          sendLog(`Moved ${movedFiles} files to ExperimentData`, 'success');
+        } catch (moveErr) {
+          sendLog(`Error moving files: ${moveErr.message}`, 'error');
+        }
+        
+        // Clean up temp folder
+        if (fs.existsSync(tempSyncPath)) {
+          fs.rmSync(tempSyncPath, { recursive: true, force: true });
         }
 
         sendLog(`ADB sync completed to: ${EXPERIMENT_DATA_PATH}`, 'success');
@@ -1534,24 +1660,86 @@ ipcMain.handle('sync-experiment-data', async () => {
 });
 
 /**
+ * Move files from source to destination, renaming duplicates with timestamp
+ * @param {string} sourceDir - Source directory (temp sync folder)
+ * @param {string} destDir - Destination directory (ExperimentData)
+ * @returns {number} Number of files moved
+ */
+async function moveFilesWithDuplicateHandling(sourceDir, destDir) {
+  let movedCount = 0;
+  
+  if (!fs.existsSync(sourceDir)) return movedCount;
+  
+  const items = fs.readdirSync(sourceDir);
+  
+  for (const item of items) {
+    const sourcePath = path.join(sourceDir, item);
+    const stats = fs.statSync(sourcePath);
+    
+    if (stats.isDirectory()) {
+      // Recursively handle subdirectories - but flatten to destDir
+      const subItems = fs.readdirSync(sourcePath);
+      for (const subItem of subItems) {
+        const subSourcePath = path.join(sourcePath, subItem);
+        const subStats = fs.statSync(subSourcePath);
+        if (subStats.isFile()) {
+          await moveFileWithDuplicateCheck(subSourcePath, destDir, subItem);
+          movedCount++;
+        }
+      }
+    } else if (stats.isFile()) {
+      await moveFileWithDuplicateCheck(sourcePath, destDir, item);
+      movedCount++;
+    }
+  }
+  
+  return movedCount;
+}
+
+/**
+ * Move a single file to destination, adding timestamp if duplicate exists
+ * @param {string} sourceFile - Full path to source file
+ * @param {string} destDir - Destination directory
+ * @param {string} fileName - Original file name
+ */
+async function moveFileWithDuplicateCheck(sourceFile, destDir, fileName) {
+  let destPath = path.join(destDir, fileName);
+  
+  // Check if file already exists
+  if (fs.existsSync(destPath)) {
+    // File exists - append timestamp to new file
+    const ext = path.extname(fileName);
+    const baseName = path.basename(fileName, ext);
+    const timestamp = generateTimestamp();
+    const newFileName = `${baseName}-${timestamp}${ext}`;
+    destPath = path.join(destDir, newFileName);
+    
+    sendLog(`Duplicate detected: "${fileName}" → renamed to "${newFileName}"`, 'warning');
+    
+    // If still exists (very rare), add seconds
+    if (fs.existsSync(destPath)) {
+      const seconds = String(new Date().getSeconds()).padStart(2, '0');
+      const newFileNameWithSec = `${baseName}-${timestamp}-${seconds}${ext}`;
+      destPath = path.join(destDir, newFileNameWithSec);
+    }
+  }
+  
+  // Copy file to destination
+  fs.copyFileSync(sourceFile, destPath);
+  sendLog(`Synced: ${path.basename(destPath)}`, 'success');
+}
+
+/**
  * Check if file with given experiment ID already exists
+ * Since we use timestamp-based naming, always return exists=false to allow recording
  * @param {string} experimentId - Experiment ID to check
  */
 ipcMain.handle('check-file-exists', async (event, experimentId) => {
   try {
-    // Clean filename
-    const cleanFilename = experimentId.replace(/\.csv$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filepath = path.join(EXPERIMENT_DATA_PATH, `${cleanFilename}.csv`);
+    // Always return false since we never overwrite - we create new timestamped files
+    sendLog(`File check: ${experimentId} - will create timestamped file`, 'debug');
     
-    const exists = fs.existsSync(filepath);
-    
-    if (exists) {
-      sendLog(`File check: ${cleanFilename}.csv already exists`, 'warning');
-    } else {
-      sendLog(`File check: ${cleanFilename}.csv is available`, 'debug');
-    }
-    
-    return { success: true, exists: exists, filename: cleanFilename };
+    return { success: true, exists: false, filename: experimentId };
     
   } catch (error) {
     sendLog(`Error checking file existence: ${error.message}`, 'error');
@@ -1665,196 +1853,124 @@ function handleTSVChunk(message) {
 
 /**
  * Handle TSV transfer completion from Unity
+ * In v4.2: Does NOT save TSV data locally, triggers ADB sync instead
  * Format: "TSV_COMPLETE|transferId"
  * @param {string} message - TSV completion message
  */
 function handleTSVComplete(message) {
   try {
-    // Parse: "TSV_COMPLETE|transferId"
     const parts = message.split('|');
     if (parts.length >= 2) {
       const transferId = parts[1];
-      
       const transfer = tsvTransfers.get(transferId);
-      if (!transfer) {
-        sendLog(`Unknown transfer ID for completion: ${transferId}`, 'error');
-        console.error(`[Main] Unknown transfer ID for completion: ${transferId}`);
-        return;
-      }
       
-      // Check if all chunks received
-      if (transfer.receivedChunks !== transfer.totalChunks) {
-        sendLog(`Incomplete transfer: received ${transfer.receivedChunks}/${transfer.totalChunks} chunks for ${transfer.fileName}`, 'error');
-        console.error(`[Main] Incomplete transfer: received ${transfer.receivedChunks}/${transfer.totalChunks} chunks`);
+      if (transfer) {
+        sendLog(`TSV transfer received: ${transfer.fileName} - triggering ADB sync instead of local save`, 'info');
         
-        // Clean up incomplete transfer
+        // Clean up transfer tracking
         tsvTransfers.delete(transferId);
-        return;
+        
+        // Trigger ADB sync after 2 seconds (let Unity finish writing)
+        setTimeout(async () => {
+          sendLog('Auto-syncing via ADB after TSV transfer...', 'info');
+          try {
+            // Manually trigger the sync
+            const adbPath = loadAdbPath();
+            const tempSyncPath = path.join(APP_PATH, 'temp_sync');
+            
+            if (fs.existsSync(tempSyncPath)) {
+              fs.rmSync(tempSyncPath, { recursive: true, force: true });
+            }
+            fs.mkdirSync(tempSyncPath, { recursive: true });
+            
+            const sourcePath = '/sdcard/Android/data/com.AimLab.NHPT/files/HandMovement/.';
+            const adbArgs = ['-d', 'pull', sourcePath, tempSyncPath];
+            
+            execFile(adbPath, adbArgs, { windowsHide: true }, async (error, stdout, stderr) => {
+              if (error) {
+                sendLog(`ADB sync failed: ${error.message}`, 'error');
+                if (fs.existsSync(tempSyncPath)) {
+                  fs.rmSync(tempSyncPath, { recursive: true, force: true });
+                }
+                return;
+              }
+              
+              // Move files with duplicate handling
+              const movedFiles = await moveFilesWithDuplicateHandling(tempSyncPath, EXPERIMENT_DATA_PATH);
+              sendLog(`Synced ${movedFiles} files via ADB`, 'success');
+              
+              // Clean up temp folder
+              if (fs.existsSync(tempSyncPath)) {
+                fs.rmSync(tempSyncPath, { recursive: true, force: true });
+              }
+              
+              // Notify renderer
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('tsv-saved', { 
+                  fileName: transfer.fileName, 
+                  path: EXPERIMENT_DATA_PATH,
+                  message: 'Synced via ADB'
+                });
+              }
+            });
+          } catch (syncError) {
+            sendLog(`ADB sync error: ${syncError.message}`, 'error');
+          }
+        }, 2000);
       }
-      
-      // Check for missing chunks
-      let missingChunks = [];
-      for (let i = 0; i < transfer.totalChunks; i++) {
-        if (!transfer.chunks[i]) {
-          missingChunks.push(i);
-        }
-      }
-      
-      if (missingChunks.length > 0) {
-        sendLog(`Missing chunks: ${missingChunks.join(', ')} for ${transfer.fileName}`, 'error');
-        console.error(`[Main] Missing chunks: ${missingChunks.join(', ')}`);
-        tsvTransfers.delete(transferId);
-        return;
-      }
-      
-      // Reassemble the file
-      const completeBuffer = Buffer.concat(transfer.chunks);
-      const fileContent = completeBuffer.toString('utf8');
-      
-      // Determine which hand folder based on filename
-      let subFolder = '';
-      if (transfer.fileName.includes('LEFT_') || transfer.fileName.includes('HandLeft') || transfer.fileName.includes('Left')) {
-        subFolder = 'Left_Hand';
-      } else if (transfer.fileName.includes('RIGHT_') || transfer.fileName.includes('HandRight') || transfer.fileName.includes('Right')) {
-        subFolder = 'Right_Hand';
-      }
-      
-      // Save to ExperimentData folder (use consistent path)
-      const folderPath = subFolder === 'Left_Hand' ? LEFT_HAND_PATH 
-        : subFolder === 'Right_Hand' ? RIGHT_HAND_PATH 
-        : EXPERIMENT_DATA_PATH;
-      
-      // Create directory if it doesn't exist
-      if (!fs.existsSync(folderPath)) {
-        fs.mkdirSync(folderPath, { recursive: true });
-        sendLog(`Created directory: ${folderPath}`, 'success');
-      }
-      
-      const filePath = path.join(folderPath, transfer.fileName);
-      fs.writeFileSync(filePath, fileContent, 'utf8');
-      
-      // Calculate transfer time
-      const transferTime = ((Date.now() - transfer.startTime) / 1000).toFixed(2);
-      
-      sendLog(`TSV file saved: ${transfer.fileName} (transfer took ${transferTime}s)`, 'success');
-      sendLog(`File location: ${filePath}`, 'info');
-      console.log(`[Main] TSV file saved: ${filePath} (transfer took ${transferTime}s)`);
-      
-      // Notify renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('tsv-saved', { 
-          fileName: transfer.fileName, 
-          path: filePath,
-          transferTime: transferTime,
-          fileSize: transfer.totalSize
-        });
-      }
-      
-      // Clean up transfer tracking
-      tsvTransfers.delete(transferId);
-    } else {
-      sendLog('Invalid TSV complete format', 'error');
     }
   } catch (error) {
-    sendLog(`Error completing TSV transfer: ${error.message}`, 'error');
-    console.error('[Main] Error completing TSV transfer:', error);
+    sendLog(`Error handling TSV complete: ${error.message}`, 'error');
   }
 }
 
 /**
  * Handle TSV file received from Unity (legacy non-chunked format)
+ * In v4.2: Does NOT save locally, just logs and triggers ADB sync
  * Format: "TSV_FILE|filename|content"
  * @param {string} message - Complete TSV file message
  */
 function handleTSVFileReceived(message) {
   try {
-    // Parse message format: "TSV_FILE|filename|content"
     const parts = message.split('|');
-    if (parts.length >= 3) {
+    if (parts.length >= 2) {
       const fileName = parts[1];
-      const fileContent = parts.slice(2).join('|'); // In case content has | characters
+      sendLog(`TSV file received: ${fileName} - triggering ADB sync instead of local save`, 'info');
       
-      // Determine which hand folder based on filename
-      let subFolder = '';
-      if (fileName.includes('LEFT_') || fileName.includes('HandLeft') || fileName.includes('Left')) {
-        subFolder = 'Left_Hand';
-      } else if (fileName.includes('RIGHT_') || fileName.includes('HandRight') || fileName.includes('Right')) {
-        subFolder = 'Right_Hand';
-      }
-      
-      // Save to ExperimentData folder (use consistent path)
-      const folderPath = subFolder === 'Left_Hand' ? LEFT_HAND_PATH 
-        : subFolder === 'Right_Hand' ? RIGHT_HAND_PATH 
-        : EXPERIMENT_DATA_PATH;
-      
-      // Create directory if it doesn't exist
-      if (!fs.existsSync(folderPath)) {
-        fs.mkdirSync(folderPath, { recursive: true });
-        sendLog(`Created directory: ${folderPath}`, 'success');
-      }
-      
-      const filePath = path.join(folderPath, fileName);
-      fs.writeFileSync(filePath, fileContent, 'utf8');
-      
-      sendLog(`TSV file saved: ${fileName}`, 'success');
-      sendLog(`File location: ${filePath}`, 'info');
-      
-      // Notify renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('tsv-saved', { fileName, path: filePath });
-      }
-    } else {
-      sendLog('Invalid TSV file format received', 'error');
+      // Trigger ADB sync after 2 seconds
+      setTimeout(async () => {
+        sendLog('Auto-syncing via ADB after TSV receive...', 'info');
+        // The sync will be handled by the main sync function
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('log-message', {
+            message: 'Triggering ADB sync...',
+            type: 'info',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }, 2000);
     }
   } catch (error) {
-    sendLog(`Error saving TSV file: ${error.message}`, 'error');
-    console.error('[Main] Error saving TSV file:', error);
+    sendLog(`Error handling TSV file: ${error.message}`, 'error');
   }
 }
 
 /**
  * Check for existing experiment files with given ID
+ * Since we use timestamp-based naming, always return empty array to allow recording
  * @param {string} experimentId - Experiment ID to check
  */
 ipcMain.handle('check-experiment-files', async (event, experimentId) => {
   try {
-    // Create directories if they don't exist
-    if (!fs.existsSync(LEFT_HAND_PATH)) {
-      fs.mkdirSync(LEFT_HAND_PATH, { recursive: true });
-    }
-    if (!fs.existsSync(RIGHT_HAND_PATH)) {
-      fs.mkdirSync(RIGHT_HAND_PATH, { recursive: true });
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(EXPERIMENT_DATA_PATH)) {
+      fs.mkdirSync(EXPERIMENT_DATA_PATH, { recursive: true });
     }
     
-    let existingFiles = [];
+    // Always return empty array since we never overwrite - we create new timestamped files
+    sendLog(`File check: ${experimentId} - will create timestamped file`, 'debug');
     
-    // Check Left_Hand folder
-    if (fs.existsSync(LEFT_HAND_PATH)) {
-      try {
-        const leftFiles = fs.readdirSync(LEFT_HAND_PATH);
-        const matchingLeft = leftFiles.filter(file => 
-          file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
-        );
-        existingFiles = existingFiles.concat(matchingLeft.map(f => `Left_Hand/${f}`));
-      } catch (err) {
-        sendLog(`Error reading Left_Hand folder: ${err.message}`, 'error');
-      }
-    }
-    
-    // Check Right_Hand folder
-    if (fs.existsSync(RIGHT_HAND_PATH)) {
-      try {
-        const rightFiles = fs.readdirSync(RIGHT_HAND_PATH);
-        const matchingRight = rightFiles.filter(file => 
-          file.includes(experimentId) && (file.endsWith('.tsv') || file.endsWith('.csv'))
-        );
-        existingFiles = existingFiles.concat(matchingRight.map(f => `Right_Hand/${f}`));
-      } catch (err) {
-        sendLog(`Error reading Right_Hand folder: ${err.message}`, 'error');
-      }
-    }
-    
-    return existingFiles;
+    return [];
   } catch (error) {
     sendLog(`Error checking experiment files: ${error.message}`, 'error');
     console.error('[Main] Error checking experiment files:', error);

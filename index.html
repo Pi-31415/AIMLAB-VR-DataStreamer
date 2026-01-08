@@ -3,13 +3,30 @@
 AIMLAB VR Data Collector - User Interface
 
 Author: Pi Ko (pi.ko@nyu.edu)
-Date: 19 November 2025
-Version: v3.9
+Date: 08 January 2026
+Version: v4.2
 
 Description:
 Minimal UI for VR data collection from Unity and Arduino motor control.
 
 Changelog:
+v4.2 - 08 January 2026 - ADB-only saving with duplicate handling
+       - All data saves now exclusively use ADB sync
+       - TSV transfers from Unity trigger ADB sync (no local save)
+       - Duplicate files automatically renamed with timestamp
+       - Format: [filename]-YYYY-Mon-DD-HH-MM-am/pm.extension
+v4.1 - 08 January 2026 - Simplified data flow with ADB-only saving
+       - Renamed "Start Right Hand" to "Start Experiment"
+       - Removed "Save Data Mid Experiment" button
+       - Stop Experiment now only triggers ADB sync (2 second delay)
+       - Removed subfolders from ExperimentData (cleaned on startup)
+       - Removed "(1)" from Test Motor button
+       - All data saved via ADB sync only (no TSV transfer)
+v4.0 - 08 January 2026 - UI cleanup and timestamp-based file naming
+       - Hidden "Start Left Hand" button (only showing "Start Right Hand")
+       - Hidden "Toggle Transparency for Peg Board" button
+       - Changed file naming to timestamp format: [ExperimentID]-YYYY-Mon-DD-HH-MM-am/pm.extension
+       - Never overwrites files - creates new timestamp-based files
 v3.9 - 19 November 2025 - Added mid-experiment save with auto-sync
        - Added "Save Data Mid Experiment" button
        - Saves TSV data without stopping experiment
@@ -89,7 +106,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
         
         <!-- Version Info -->
         <div class="version-info">
-            Version 3.9.0 | Ports: Unity 45000/45101, Electron 45001/45102
+            Version 4.2.0 | Ports: Unity 45000/45101, Electron 45001/45102
         </div>
 
         <!-- Control Panel -->
@@ -99,10 +116,10 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
                 <h3>Unity Connection</h3>
                 <button id="connectUnity" class="btn-primary">Connect to Unity</button>
                 <input type="text" id="experimentId" placeholder="Enter Experiment ID (required)" />
-                <button id="startLeftExperiment" class="btn-success" disabled>Start Left Hand</button>
-                <button id="startRightExperiment" class="btn-success" disabled>Start Right Hand</button>
+                <button id="startLeftExperiment" class="btn-success" disabled style="display: none;">Start Left Hand</button>
+                <button id="startRightExperiment" class="btn-success" disabled>Start Experiment</button>
                 <button id="stopExperiment" class="btn-danger" disabled>Stop Experiment</button>
-                <button id="togglePegBoardTransparency" class="btn-secondary">Toggle Transparency for Peg Board (if Peg goes in)</button>
+                <button id="togglePegBoardTransparency" class="btn-secondary" style="display: none;">Toggle Transparency for Peg Board (if Peg goes in)</button>
                 <button id="refreshUnity" class="btn-secondary">Refresh</button>
                 <div class="recording-status" id="recordingStatus"></div>
             </div>
@@ -111,7 +128,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div class="control-group">
                 <h3>Experiment Data</h3>
                 <button id="openDataFolder" class="btn-primary">Open Experiment Data Folder</button>
-                <button id="saveMidExperiment" class="btn-warning" disabled>Save Data Mid Experiment</button>
+                <!-- Mid-experiment save removed in v4.1 - ADB sync is the only save mechanism -->
                 <button id="syncExperimentData" class="btn-secondary">Sync Experiment Data to PC</button>
                 <button id="setAdbPath" class="btn-secondary">Set ADB Path</button>
             </div>
@@ -120,7 +137,7 @@ v1.0 - 04 November 2025 - Initial NYU purple themed UI
             <div class="control-group">
                 <h3>Vibration Motor</h3>
                 <button id="connectArduino" class="btn-primary">Connect Motor</button>
-                <button id="testMotor" class="btn-secondary" disabled>Test Motor (1)</button>
+                <button id="testMotor" class="btn-secondary" disabled>Test Motor</button>
                 <button id="refreshArduino" class="btn-secondary">Refresh</button>
             </div>
         </div>
